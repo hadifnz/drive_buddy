@@ -1,0 +1,18 @@
+# Generated files
+.dart_tool/
+.packages
+.flutter-plugins
+.flutter-plugins-dependencies
+build/
+
+# IDE-specific
+.idea/
+.vscode/
+*.iml
+*.ipr
+
+# Local settings
+local.properties
+
+# Log files
+*.log
