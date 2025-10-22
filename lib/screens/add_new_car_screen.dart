@@ -1,6 +1,8 @@
 // lib/screens/add_new_car_screen.dart
 
 import 'package:flutter/material.dart';
+import 'package:hive/hive.dart'; // Import Hive
+import 'package:drive_buddy/models/car_model.dart'; // Import Car model
 
 class AddNewCarScreen extends StatefulWidget {
   const AddNewCarScreen({super.key});
@@ -32,6 +34,29 @@ class _AddNewCarScreenState extends State<AddNewCarScreen> {
     super.dispose();
   }
 
+  void _saveCar() {
+    // 1. Create the Car object from the controllers
+    final newCar = Car(
+      plateNumber: _plateController.text,
+      model: _modelController.text,
+      brand: _makeController.text,
+      // Parse odometer to double, default to 0.0 if empty or invalid
+      currentMileage: double.tryParse(_odometerController.text) ?? 0.0,
+      tireSize: _tireSizeController.text,
+      engine: _engineController.text,
+      lastService: _lastServiceController.text,
+    );
+
+    // 2. Get the 'cars' box
+    final box = Hive.box<Car>('cars');
+
+    // 3. Add the new car to the box
+    box.add(newCar);
+
+    // 4. Go back to the dashboard
+    Navigator.of(context).pop();
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -54,12 +79,22 @@ class _AddNewCarScreenState extends State<AddNewCarScreen> {
             _buildTextField(controller: _plateController, label: 'Plate No.'),
             _buildTextField(controller: _modelController, label: 'Model'),
             _buildTextField(controller: _makeController, label: 'Make'),
-            _buildTextField(controller: _odometerController, label: 'Odometer', keyboardType: TextInputType.number),
-            _buildTextField(controller: _tireSizeController, label: 'Tire Size'),
+            _buildTextField(
+              controller: _odometerController,
+              label: 'Odometer',
+              keyboardType: TextInputType.number,
+            ),
+            _buildTextField(
+              controller: _tireSizeController,
+              label: 'Tire Size',
+            ),
             _buildTextField(controller: _engineController, label: 'Engine'),
-            _buildTextField(controller: _lastServiceController, label: 'Last Service'),
+            _buildTextField(
+              controller: _lastServiceController,
+              label: 'Last Service',
+            ),
             const SizedBox(height: 40),
-            
+
             // Action buttons: "Cancel" and "Confirm"
             Row(
               children: [
@@ -79,6 +114,7 @@ class _AddNewCarScreenState extends State<AddNewCarScreen> {
                     text: 'Confirm',
                     isPrimary: true,
                     onPressed: () {
+                      _saveCar();
                       // TODO: Add logic to save the car data to the database (Hive/Firebase)
                       // After saving, pop the screen
                       Navigator.of(context).pop();
@@ -122,7 +158,10 @@ class _AddNewCarScreenState extends State<AddNewCarScreen> {
                   borderRadius: BorderRadius.circular(12),
                   borderSide: BorderSide.none,
                 ),
-                contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 12,
+                ),
               ),
             ),
           ),
@@ -143,9 +182,7 @@ class _AddNewCarScreenState extends State<AddNewCarScreen> {
         backgroundColor: isPrimary ? Colors.white : Colors.grey.shade800,
         foregroundColor: isPrimary ? Colors.black : Colors.white,
         padding: const EdgeInsets.symmetric(vertical: 16),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(12),
-        ),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       ),
       child: Text(text, style: const TextStyle(fontWeight: FontWeight.bold)),
     );

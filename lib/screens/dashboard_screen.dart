@@ -1,6 +1,8 @@
 // lib/screens/dashboard_screen.dart
 
 import 'package:flutter/material.dart';
+import 'package:hive_flutter/hive_flutter.dart'; // Import Hive
+import 'package:drive_buddy/models/car_model.dart'; // Import Car model
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
@@ -10,9 +12,6 @@ class DashboardScreen extends StatefulWidget {
 }
 
 class _DashboardScreenState extends State<DashboardScreen> {
-  // A sample list of cars. In a real app, this data would come from a database.
-  final List<String> carPlates = ['PLX5391', 'VEV5422', 'KLX6427'];
-
   int _selectedIndex = 0; // To track the active tab in the BottomNavigationBar
 
   void _onItemTapped(int index) {
@@ -53,16 +52,52 @@ class _DashboardScreenState extends State<DashboardScreen> {
           children: [
             const SizedBox(height: 20),
             // Greeting text "Hi!" [cite: 619] and "Choose Your Car" [cite: 620]
-            const Text('Hi!', style: TextStyle(color: Colors.white, fontSize: 32, fontWeight: FontWeight.bold)),
-            Text('Choose Your Car', style: TextStyle(color: Colors.white.withOpacity(0.7), fontSize: 18)),
+            const Text(
+              'Hi!',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 32,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            Text(
+              'Choose Your Car',
+              style: TextStyle(
+                color: Colors.white.withOpacity(0.7),
+                fontSize: 18,
+              ),
+            ),
             const SizedBox(height: 30),
 
             // Car list
             Expanded(
-              child: ListView.builder(
-                itemCount: carPlates.length,
-                itemBuilder: (context, index) {
-                  return _buildCarButton(carPlates[index]);
+              // Use ValueListenableBuilder to listen for changes in the 'cars' box
+              child: ValueListenableBuilder(
+                valueListenable: Hive.box<Car>('cars').listenable(),
+                builder: (context, Box<Car> box, _) {
+                  final cars = box.values.toList().cast<Car>();
+
+                  if (cars.isEmpty) {
+                    return Center(
+                      child: Text(
+                        "Tap the '+' button to add your first car!",
+                        style: TextStyle(
+                          color: Colors.white.withOpacity(0.7),
+                          fontSize: 16,
+                        ),
+                        textAlign: TextAlign.center,
+                      ),
+                    );
+                  }
+
+                  return ListView.builder(
+                    itemCount: cars.length,
+                    itemBuilder: (context, index) {
+                      final car = cars[index];
+                      // Pass the whole Car object to the helper
+                      return _buildCarButton(car);
+                    },
+                  );
                 },
               ),
             ),
@@ -72,13 +107,15 @@ class _DashboardScreenState extends State<DashboardScreen> {
       // Floating Action Button to add a new car [cite: 624]
       floatingActionButton: FloatingActionButton(
         onPressed: () {
-          Navigator.of(context).pushNamed('/add_car'); // TODO: Navigate to Add New Car screen
+          Navigator.of(
+            context,
+          ).pushNamed('/add_car'); // TODO: Navigate to Add New Car screen
         },
         backgroundColor: Colors.grey.shade800,
         child: const Icon(Icons.add, color: Colors.white),
       ),
       floatingActionButtonLocation: FloatingActionButtonLocation.centerDocked,
-      
+
       // Bottom Navigation Bar with icons for Dashboard and Chatbot
       bottomNavigationBar: BottomNavigationBar(
         items: const <BottomNavigationBarItem>[
@@ -86,10 +123,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
             icon: Icon(Icons.directions_car),
             label: 'Cars',
           ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.chat_bubble),
-            label: 'Chat',
-          ),
+          BottomNavigationBarItem(icon: Icon(Icons.chat_bubble), label: 'Chat'),
         ],
         currentIndex: _selectedIndex,
         onTap: _onItemTapped,
@@ -104,7 +138,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   // Helper widget for the car selection buttons [cite: 621, 622, 623]
-  Widget _buildCarButton(String plateNumber) {
+  Widget _buildCarButton(Car car) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 8.0),
       child: SizedBox(
@@ -112,6 +146,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
         child: ElevatedButton(
           onPressed: () {
             // TODO: Navigate to the Logbook screen for this car
+            // We can now pass the car object, e.g.:
+            // Navigator.of(context).pushNamed('/logbook', arguments: car);
           },
           style: ElevatedButton.styleFrom(
             backgroundColor: Colors.grey.shade800,
@@ -121,8 +157,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
             ),
           ),
           child: Text(
-            plateNumber,
-            style: const TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold),
+            car.plateNumber, // Display the plate number
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 20,
+              fontWeight: FontWeight.bold,
+            ),
           ),
         ),
       ),
