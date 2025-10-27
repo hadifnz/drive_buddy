@@ -147,7 +147,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
           onPressed: () {
             // TODO: Navigate to the Logbook screen for this car
             // We can now pass the car object, e.g.:
-            // Navigator.of(context).pushNamed('/logbook', arguments: car);
+            Navigator.of(context).pushNamed('/logbook', arguments: car);
           },
           style: ElevatedButton.styleFrom(
             backgroundColor: Colors.grey.shade800,
