@@ -113,6 +113,9 @@ class LogbookScreen extends StatelessWidget {
           child: ElevatedButton(
             onPressed: () {
               // TODO: Navigate to the "Start Driving" screen/session
+              Navigator.of(
+                context,
+              ).pushNamed('/driving_session', arguments: car);
             },
             style: ElevatedButton.styleFrom(
               backgroundColor: Colors.grey.shade800,

@@ -6,6 +6,7 @@ import 'models/car_model.dart';
 import 'package:drive_buddy/screens/add_new_car_screen.dart';
 import 'package:drive_buddy/screens/logbook_screen.dart';
 import 'package:drive_buddy/screens/chatbot_screen.dart';
+import 'package:drive_buddy/screens/driving_session_screen.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -48,6 +49,12 @@ class DriveBuddyApp extends StatelessWidget {
 
           case '/chatbot':
             return MaterialPageRoute(builder: (_) => const ChatbotScreen());
+
+          case '/driving_session':
+            final car = settings.arguments as Car;
+            return MaterialPageRoute(
+              builder: (_) => DrivingSessionScreen(car: car),
+            );
 
           default:
             return MaterialPageRoute(builder: (_) => const LoginScreen());
