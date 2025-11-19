@@ -7,6 +7,7 @@ import 'package:drive_buddy/screens/add_new_car_screen.dart';
 import 'package:drive_buddy/screens/logbook_screen.dart';
 import 'package:drive_buddy/screens/chatbot_screen.dart';
 import 'package:drive_buddy/screens/driving_session_screen.dart';
+import 'package:drive_buddy/models/trip_session_model.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -14,8 +15,10 @@ Future<void> main() async {
   await Hive.initFlutter();
   // Register the Car adapter
   Hive.registerAdapter(CarAdapter());
-  // Open a Hive box for storing cars
+  Hive.registerAdapter(TripSessionAdapter());
   await Hive.openBox<Car>('cars');
+
+  await Hive.openBox<TripSession>('trip_sessions');
 
   runApp(const DriveBuddyApp());
 }

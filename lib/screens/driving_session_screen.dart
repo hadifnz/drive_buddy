@@ -6,6 +6,8 @@ import 'package:drive_buddy/models/car_model.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:sensors_plus/sensors_plus.dart';
+import 'package:hive_flutter/hive_flutter.dart';
+import 'package:drive_buddy/models/trip_session_model.dart';
 
 class DrivingSessionScreen extends StatefulWidget {
   final Car car;
@@ -133,16 +135,59 @@ class _DrivingSessionScreenState extends State<DrivingSessionScreen> {
   }
 
   void _endSession() {
+    // 1. Stop all timers and listeners first
     _timer?.cancel();
     _positionStream?.cancel();
     _accelerometerStream?.cancel();
     _gyroscopeStream?.cancel();
 
-    // TODO: Save the session data (duration, distance, event counts)
-    // to a new HiveBox (e.g., 'trip_sessions') linked to the car.
+    // 2. Create the Trip Session object
+    // We use 'widget.car.key' to link this trip to the car
+    final newTrip = TripSession(
+      carKey: widget.car.key,
+      endTimestamp: DateTime.now(),
+      durationInSeconds: _sessionDuration,
+      distanceInMeters: _distanceMeters,
+      harshBrakingCount: _harshBrakingCount,
+      rapidAccelCount: _rapidAccelCount,
+      sharpTurnCount: _sharpTurnCount,
+    );
+
+    // 3. Save the trip to Hive
+    Hive.box<TripSession>('trip_sessions').add(newTrip);
+
+    // 4. Update the Car's mileage safely
+    final carBox = Hive.box<Car>('cars');
+
+    // SAFETY CHECK: Check if this car still exists in the box
+    // If we don't check, and the key is invalid, the app will crash.
+    final existingCar = carBox.get(widget.car.key);
+
+    if (existingCar != null) {
+      final double distanceKm = _distanceMeters / 1000.0;
+
+      // Create the updated car object
+      final updatedCar = Car(
+        plateNumber: existingCar.plateNumber,
+        model: existingCar.model,
+        brand: existingCar.brand,
+        // Add the new distance to the EXISTING mileage
+        currentMileage: existingCar.currentMileage + distanceKm,
+        tireSize: existingCar.tireSize,
+        engine: existingCar.engine,
+        lastService: existingCar.lastService,
+      );
+
+      // Save it back to the same key
+      carBox.put(widget.car.key, updatedCar);
+    } else {
+      print("Error: Could not update mileage. Car not found in database.");
+    }
   }
 
-  // Helper to format duration
+  // --- PASTE THIS MISSING CODE ---
+
+  // Helper to format duration (e.g., converts 65 seconds to "00:01:05")
   String _formatDuration(int totalSeconds) {
     final duration = Duration(seconds: totalSeconds);
     String twoDigits(int n) => n.toString().padLeft(2, '0');
@@ -150,6 +195,46 @@ class _DrivingSessionScreenState extends State<DrivingSessionScreen> {
     final minutes = twoDigits(duration.inMinutes.remainder(60));
     final seconds = twoDigits(duration.inSeconds.remainder(60));
     return "$hours:$minutes:$seconds";
+  }
+
+  // Helper widget for the top stats (Duration, Distance)
+  Widget _buildStatCard(String label, String value) {
+    return Column(
+      children: [
+        Text(
+          value,
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 32,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        Text(
+          label,
+          style: TextStyle(color: Colors.white.withOpacity(0.7), fontSize: 16),
+        ),
+      ],
+    );
+  }
+
+  // Helper widget for the event counters (Brakes, Accels, Turns)
+  Widget _buildEventCard(String label, int count, Color color) {
+    return Column(
+      children: [
+        Text(
+          count.toString(),
+          style: TextStyle(
+            color: color,
+            fontSize: 40,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        Text(
+          label,
+          style: TextStyle(color: color.withOpacity(0.8), fontSize: 14),
+        ),
+      ],
+    );
   }
 
   @override
@@ -245,44 +330,6 @@ class _DrivingSessionScreenState extends State<DrivingSessionScreen> {
           ],
         ),
       ),
-    );
-  }
-
-  Widget _buildStatCard(String label, String value) {
-    return Column(
-      children: [
-        Text(
-          value,
-          style: const TextStyle(
-            color: Colors.white,
-            fontSize: 32,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-        Text(
-          label,
-          style: TextStyle(color: Colors.white.withOpacity(0.7), fontSize: 16),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildEventCard(String label, int count, Color color) {
-    return Column(
-      children: [
-        Text(
-          count.toString(),
-          style: TextStyle(
-            color: color,
-            fontSize: 40,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-        Text(
-          label,
-          style: TextStyle(color: color.withOpacity(0.8), fontSize: 14),
-        ),
-      ],
     );
   }
 }

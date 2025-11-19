@@ -37,6 +37,10 @@ dependencies:
   hive_flutter: ^1.1.0           # Flutter extension for Hive
   provider: ^6.1.2               # For state management
   permission_handler: ^11.3.1    # To request sensor/location permissions
+  intl: ^0.18.1
+  
+  http: ^1.2.1
+  flutter_dotenv: 
 
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.
@@ -61,13 +65,18 @@ dev_dependencies:
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
 
-# The following section is specific to Flutter packages.
 flutter:
+assets:
+  - .env
+
+uses-material-design: true
+
+
+# The following section is specific to Flutter packages.
 
   # The following line ensures that the Material Icons font is
   # included with your application, so that you can use the icons in
   # the material Icons class.
-  uses-material-design: true
 
   # To add assets to your application, add an assets section, like this:
   # assets:
