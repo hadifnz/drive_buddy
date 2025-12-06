@@ -1,8 +1,7 @@
-// lib/screens/add_new_car_screen.dart
-
 import 'package:flutter/material.dart';
-import 'package:hive/hive.dart'; // Import Hive
-import 'package:drive_buddy/models/car_model.dart'; // Import Car model
+import 'package:hive/hive.dart';
+import 'package:drive_buddy/models/car_model.dart';
+import 'package:intl/intl.dart'; // For Date Formatting
 
 class AddNewCarScreen extends StatefulWidget {
   const AddNewCarScreen({super.key});
@@ -12,7 +11,6 @@ class AddNewCarScreen extends StatefulWidget {
 }
 
 class _AddNewCarScreenState extends State<AddNewCarScreen> {
-  // A controller for each text field to manage its value
   final _plateController = TextEditingController();
   final _modelController = TextEditingController();
   final _makeController = TextEditingController();
@@ -20,10 +18,21 @@ class _AddNewCarScreenState extends State<AddNewCarScreen> {
   final _tireSizeController = TextEditingController();
   final _engineController = TextEditingController();
   final _lastServiceController = TextEditingController();
+  final _capacityController = TextEditingController();
+
+  // Dropdown Selections
+  String? _selectedOilType;
+  final List<String> _oilTypes = [
+    'Mineral (5,000 km)',
+    'Semi-Synthetic (7,000 km)',
+    'Fully-Synthetic (10,000 km)',
+  ];
+
+  String? _selectedTransmission;
+  final List<String> _transmissionTypes = ['Auto (AT)', 'Manual (MT)', 'CVT'];
 
   @override
   void dispose() {
-    // Clean up controllers when the widget is removed from the widget tree
     _plateController.dispose();
     _modelController.dispose();
     _makeController.dispose();
@@ -31,29 +40,68 @@ class _AddNewCarScreenState extends State<AddNewCarScreen> {
     _tireSizeController.dispose();
     _engineController.dispose();
     _lastServiceController.dispose();
+    _capacityController.dispose();
     super.dispose();
   }
 
+  // Date Picker Logic
+  Future<void> _selectDate(BuildContext context) async {
+    final DateTime? picked = await showDatePicker(
+      context: context,
+      initialDate: DateTime.now(),
+      firstDate: DateTime(2000),
+      lastDate: DateTime.now(),
+      builder: (context, child) {
+        return Theme(
+          data: Theme.of(context).copyWith(
+            colorScheme: const ColorScheme.dark(
+              primary: Colors.white,
+              onPrimary: Colors.black,
+              onSurface: Colors.white,
+            ),
+            textButtonTheme: TextButtonThemeData(
+              style: TextButton.styleFrom(foregroundColor: Colors.white),
+            ),
+          ),
+          child: child!,
+        );
+      },
+    );
+
+    if (picked != null) {
+      setState(() {
+        _lastServiceController.text = DateFormat('yyyy-MM-dd').format(picked);
+      });
+    }
+  }
+
   void _saveCar() {
-    // 1. Create the Car object from the controllers
+    // 1. Determine Oil Life
+    double initialOilLife = 10000.0;
+    if (_selectedOilType != null) {
+      if (_selectedOilType!.contains('Mineral')) initialOilLife = 5000.0;
+      if (_selectedOilType!.contains('Semi')) initialOilLife = 7000.0;
+      if (_selectedOilType!.contains('Fully')) initialOilLife = 10000.0;
+    }
+
+    // 2. Create Car
     final newCar = Car(
       plateNumber: _plateController.text,
       model: _modelController.text,
       brand: _makeController.text,
-      // Parse odometer to double, default to 0.0 if empty or invalid
       currentMileage: double.tryParse(_odometerController.text) ?? 0.0,
       tireSize: _tireSizeController.text,
       engine: _engineController.text,
       lastService: _lastServiceController.text,
+      oilType: _selectedOilType,
+      oilLifeRemaining: initialOilLife,
+      engineCapacity: _capacityController.text,
+      transmissionType: _selectedTransmission,
     );
 
-    // 2. Get the 'cars' box
     final box = Hive.box<Car>('cars');
-
-    // 3. Add the new car to the box
     box.add(newCar);
 
-    // 4. Go back to the dashboard
     Navigator.of(context).pop();
   }
 
@@ -62,50 +110,77 @@ class _AddNewCarScreenState extends State<AddNewCarScreen> {
     return Scaffold(
       backgroundColor: Colors.black,
       appBar: AppBar(
-        // AppBar title "ADD NEW CAR"
         title: const Text(
           'ADD NEW CAR',
-          style: TextStyle(fontWeight: FontWeight.bold, letterSpacing: 1.5),
+          style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
         ),
         backgroundColor: Colors.black,
-        elevation: 0,
-        centerTitle: true,
+        iconTheme: const IconThemeData(color: Colors.white),
       ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(24.0),
         child: Column(
           children: [
-            // Form fields matching your UI design
             _buildTextField(controller: _plateController, label: 'Plate No.'),
             _buildTextField(controller: _modelController, label: 'Model'),
             _buildTextField(controller: _makeController, label: 'Make'),
+
+            // Odometer (Number Pad)
             _buildTextField(
               controller: _odometerController,
               label: 'Odometer',
               keyboardType: TextInputType.number,
             ),
+
+            // Oil Type Dropdown
+            _buildDropdown(
+              label: 'Oil Type',
+              value: _selectedOilType,
+              items: _oilTypes,
+              onChanged: (val) => setState(() => _selectedOilType = val),
+            ),
+
+            // Capacity (Decimal Pad)
+            _buildTextField(
+              controller: _capacityController,
+              label: 'Capacity (L)',
+              keyboardType: const TextInputType.numberWithOptions(
+                decimal: true,
+              ),
+            ),
+
+            // Transmission Dropdown
+            _buildDropdown(
+              label: 'Trans.',
+              value: _selectedTransmission,
+              items: _transmissionTypes,
+              onChanged: (val) => setState(() => _selectedTransmission = val),
+            ),
+
             _buildTextField(
               controller: _tireSizeController,
               label: 'Tire Size',
             ),
-            _buildTextField(controller: _engineController, label: 'Engine'),
             _buildTextField(
+              controller: _engineController,
+              label: 'Engine Code',
+            ),
+
+            // Last Service (Date Picker)
+            _buildDatePickerField(
               controller: _lastServiceController,
               label: 'Last Service',
+              context: context,
             ),
-            const SizedBox(height: 40),
 
-            // Action buttons: "Cancel" and "Confirm"
+            const SizedBox(height: 40),
             Row(
               children: [
                 Expanded(
                   child: _buildButton(
                     text: 'Cancel',
                     isPrimary: false,
-                    onPressed: () {
-                      // Pop the screen to go back to the dashboard
-                      Navigator.of(context).pop();
-                    },
+                    onPressed: () => Navigator.of(context).pop(),
                   ),
                 ),
                 const SizedBox(width: 16),
@@ -113,12 +188,7 @@ class _AddNewCarScreenState extends State<AddNewCarScreen> {
                   child: _buildButton(
                     text: 'Confirm',
                     isPrimary: true,
-                    onPressed: () {
-                      _saveCar();
-                      // TODO: Add logic to save the car data to the database (Hive/Firebase)
-                      // After saving, pop the screen
-                      Navigator.of(context).pop();
-                    },
+                    onPressed: _saveCar,
                   ),
                 ),
               ],
@@ -129,7 +199,7 @@ class _AddNewCarScreenState extends State<AddNewCarScreen> {
     );
   }
 
-  // Helper widget for a single form field row
+  // --- Widgets ---
   Widget _buildTextField({
     required TextEditingController controller,
     required String label,
@@ -140,7 +210,7 @@ class _AddNewCarScreenState extends State<AddNewCarScreen> {
       child: Row(
         children: [
           SizedBox(
-            width: 100, // Fixed width for labels
+            width: 100,
             child: Text(
               '$label :',
               style: const TextStyle(color: Colors.white, fontSize: 16),
@@ -170,7 +240,100 @@ class _AddNewCarScreenState extends State<AddNewCarScreen> {
     );
   }
 
-  // Helper widget for the action buttons
+  Widget _buildDatePickerField({
+    required TextEditingController controller,
+    required String label,
+    required BuildContext context,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8.0),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 100,
+            child: Text(
+              '$label :',
+              style: const TextStyle(color: Colors.white, fontSize: 16),
+            ),
+          ),
+          Expanded(
+            child: TextField(
+              controller: controller,
+              readOnly: true,
+              onTap: () => _selectDate(context),
+              style: const TextStyle(color: Colors.white),
+              decoration: InputDecoration(
+                filled: true,
+                fillColor: Colors.grey.shade800,
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide.none,
+                ),
+                contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 12,
+                ),
+                suffixIcon: const Icon(
+                  Icons.calendar_today,
+                  color: Colors.white54,
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDropdown({
+    required String label,
+    required String? value,
+    required List<String> items,
+    required ValueChanged<String?> onChanged,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8.0),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 100,
+            child: Text(
+              '$label :',
+              style: const TextStyle(color: Colors.white, fontSize: 16),
+            ),
+          ),
+          Expanded(
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              decoration: BoxDecoration(
+                color: Colors.grey.shade800,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: DropdownButtonHideUnderline(
+                child: DropdownButton<String>(
+                  value: value,
+                  dropdownColor: Colors.grey.shade800,
+                  hint: const Text(
+                    "Select",
+                    style: TextStyle(color: Colors.white54),
+                  ),
+                  icon: const Icon(Icons.arrow_drop_down, color: Colors.white),
+                  style: const TextStyle(color: Colors.white, fontSize: 16),
+                  onChanged: onChanged,
+                  items: items
+                      .map<DropdownMenuItem<String>>(
+                        (val) => DropdownMenuItem(value: val, child: Text(val)),
+                      )
+                      .toList(),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildButton({
     required String text,
     required bool isPrimary,

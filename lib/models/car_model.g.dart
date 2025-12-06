@@ -24,13 +24,17 @@ class CarAdapter extends TypeAdapter<Car> {
       tireSize: fields[4] as String?,
       engine: fields[5] as String?,
       lastService: fields[6] as String?,
+      oilType: fields[7] as String?,
+      oilLifeRemaining: fields[8] as double,
+      engineCapacity: fields[9] as String?,
+      transmissionType: fields[10] as String?,
     );
   }
 
   @override
   void write(BinaryWriter writer, Car obj) {
     writer
-      ..writeByte(7)
+      ..writeByte(11)
       ..writeByte(0)
       ..write(obj.plateNumber)
       ..writeByte(1)
@@ -44,7 +48,15 @@ class CarAdapter extends TypeAdapter<Car> {
       ..writeByte(5)
       ..write(obj.engine)
       ..writeByte(6)
-      ..write(obj.lastService);
+      ..write(obj.lastService)
+      ..writeByte(7)
+      ..write(obj.oilType)
+      ..writeByte(8)
+      ..write(obj.oilLifeRemaining)
+      ..writeByte(9)
+      ..write(obj.engineCapacity)
+      ..writeByte(10)
+      ..write(obj.transmissionType);
   }
 
   @override

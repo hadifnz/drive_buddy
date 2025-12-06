@@ -1,6 +1,7 @@
 // lib/screens/driving_session_screen.dart
 
 import 'dart:async';
+import 'dart:math'; // Import Math for sqrt()
 import 'package:flutter/material.dart';
 import 'package:drive_buddy/models/car_model.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -8,6 +9,7 @@ import 'package:geolocator/geolocator.dart';
 import 'package:sensors_plus/sensors_plus.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:drive_buddy/models/trip_session_model.dart';
+import 'dart:io' show Platform;
 
 class DrivingSessionScreen extends StatefulWidget {
   final Car car;
@@ -18,24 +20,22 @@ class DrivingSessionScreen extends StatefulWidget {
 }
 
 class _DrivingSessionScreenState extends State<DrivingSessionScreen> {
-  // Stream Subscriptions
   StreamSubscription? _positionStream;
   StreamSubscription? _accelerometerStream;
   StreamSubscription? _gyroscopeStream;
   Timer? _timer;
 
-  // Session Data
-  int _sessionDuration = 0; // in seconds
+  int _sessionDuration = 0;
   double _speedKmh = 0;
   double _distanceMeters = 0;
   Position? _lastPosition;
 
-  // Behavior Counters
   int _harshBrakingCount = 0;
   int _rapidAccelCount = 0;
   int _sharpTurnCount = 0;
 
-  bool _isDetectingEvents = true; // To throttle event detection
+  bool _isDetectingEvents = true;
+  bool _isSessionSaved = false;
 
   @override
   void initState() {
@@ -45,104 +45,100 @@ class _DrivingSessionScreenState extends State<DrivingSessionScreen> {
 
   @override
   void dispose() {
-    _endSession(); // Ensure all streams are cancelled
+    _endSession();
     super.dispose();
   }
 
   Future<void> _startSession() async {
-    // 1. Request Permission
-    if (await Permission.location.request().isGranted) {
-      // 2. Start Timer
-      _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
-        setState(() {
-          _sessionDuration++;
+    if (Platform.isAndroid || Platform.isIOS) {
+      if (await Permission.location.request().isGranted) {
+        _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
+          if (mounted) setState(() => _sessionDuration++);
         });
-      });
 
-      // 3. Start GPS Stream
-      _positionStream =
-          Geolocator.getPositionStream(
-            locationSettings: const LocationSettings(
-              accuracy: LocationAccuracy.bestForNavigation,
-              distanceFilter: 5, // Update every 5 meters
-            ),
-          ).listen((Position position) {
-            setState(() {
-              _speedKmh = position.speed * 3.6; // Convert m/s to km/h
-              if (_lastPosition != null) {
-                _distanceMeters += Geolocator.distanceBetween(
-                  _lastPosition!.latitude,
-                  _lastPosition!.longitude,
-                  position.latitude,
-                  position.longitude,
-                );
+        _positionStream =
+            Geolocator.getPositionStream(
+              locationSettings: const LocationSettings(
+                accuracy: LocationAccuracy.bestForNavigation,
+                distanceFilter: 5,
+              ),
+            ).listen((Position position) {
+              if (mounted) {
+                setState(() {
+                  _speedKmh = position.speed * 3.6;
+                  if (_lastPosition != null) {
+                    _distanceMeters += Geolocator.distanceBetween(
+                      _lastPosition!.latitude,
+                      _lastPosition!.longitude,
+                      position.latitude,
+                      position.longitude,
+                    );
+                  }
+                  _lastPosition = position;
+                });
               }
-              _lastPosition = position;
             });
-          });
 
-      // 4. Start Accelerometer Stream
-      // We use userAccelerometerEvents to exclude gravity
-      _accelerometerStream = userAccelerometerEvents.listen((event) {
-        if (!_isDetectingEvents) return;
+        // --- UPGRADED SENSOR LOGIC (ORIENTATION INDEPENDENT) ---
+        // We use userAccelerometerEvents (excludes gravity).
+        // Magnitude = sqrt(x^2 + y^2 + z^2)
+        _accelerometerStream = userAccelerometerEvents.listen((event) {
+          if (!_isDetectingEvents) return;
 
-        // Assuming phone is in a portrait cradle (Z-axis is forward/backward)
-        double z = event.z;
+          double magnitude = sqrt(
+            (event.x * event.x) + (event.y * event.y) + (event.z * event.z),
+          );
 
-        // Rapid Acceleration [cite: 725]
-        if (z > 4.0) {
-          setState(() {
-            _rapidAccelCount++;
-          });
-          _throttleEvents();
-        }
-        // Harsh Braking [cite: 724]
-        else if (z < -6.0) {
-          setState(() {
-            _harshBrakingCount++;
-          });
-          _throttleEvents();
-        }
-      });
+          // Threshold: 4.0 m/s^2 is roughly 0.4g of force
+          if (magnitude > 4.0) {
+            // Determine if it was mostly Braking/Accel (Z-axis dominant) or Turning (X-axis dominant)
+            // Note: This assumes some alignment, but magnitude captures the STRESS regardless.
+            // For simplicity in this "Pocket Mode", we count high G-force as "Harsh Event".
+            // To be more specific, we'd need rotation matrices, but Magnitude is sufficient for Wear Calc.
 
-      // 5. Start Gyroscope Stream [cite: 720]
-      _gyroscopeStream = gyroscopeEvents.listen((event) {
-        if (!_isDetectingEvents) return;
+            // Simple logic: frequent spikes = Aggressive
+            setState(() => _rapidAccelCount++); // We log it as an event count
+            _throttleEvents();
+          }
 
-        // Assuming phone is in a portrait cradle (Y-axis is yaw/turning)
-        double y = event.y;
+          // Legacy check if phone happens to be upright (optional, keeps old logic working too)
+          if (event.z < -6.0) {
+            setState(() => _harshBrakingCount++);
+            _throttleEvents();
+          }
+        });
 
-        // Sudden Turn [cite: 726]
-        if (y.abs() > 2.5) {
-          setState(() {
-            _sharpTurnCount++;
-          });
-          _throttleEvents();
-        }
-      });
-    } else {
-      // Handle permission denied
-      Navigator.of(context).pop();
+        _gyroscopeStream = gyroscopeEvents.listen((event) {
+          if (!_isDetectingEvents) return;
+          if (event.y.abs() > 2.5) {
+            setState(() => _sharpTurnCount++);
+            _throttleEvents();
+          }
+        });
+      } else {
+        if (mounted) Navigator.of(context).pop();
+      }
     }
   }
 
-  // Prevents multiple events from firing in one maneuver
   void _throttleEvents() {
     _isDetectingEvents = false;
     Future.delayed(const Duration(seconds: 3), () {
-      _isDetectingEvents = true;
+      if (mounted) _isDetectingEvents = true;
     });
   }
 
+  // --- UPGRADED END SESSION LOGIC (EFFECTIVE KM) ---
   void _endSession() {
-    // 1. Stop all timers and listeners first
+    if (_isSessionSaved) return;
+    _isSessionSaved = true;
+
     _timer?.cancel();
     _positionStream?.cancel();
     _accelerometerStream?.cancel();
     _gyroscopeStream?.cancel();
 
-    // 2. Create the Trip Session object
-    // We use 'widget.car.key' to link this trip to the car
+    // 1. Save Trip
     final newTrip = TripSession(
       carKey: widget.car.key,
       endTimestamp: DateTime.now(),
@@ -152,52 +148,49 @@ class _DrivingSessionScreenState extends State<DrivingSessionScreen> {
       rapidAccelCount: _rapidAccelCount,
       sharpTurnCount: _sharpTurnCount,
     );
-
-    // 3. Save the trip to Hive
     Hive.box<TripSession>('trip_sessions').add(newTrip);
 
-    // 4. Update the Car's mileage safely
+    // 2. Calculate Effective KM & Update Car
     final carBox = Hive.box<Car>('cars');
+    final liveCar = carBox.get(widget.car.key);
 
-    // SAFETY CHECK: Check if this car still exists in the box
-    // If we don't check, and the key is invalid, the app will crash.
-    final existingCar = carBox.get(widget.car.key);
+    if (liveCar != null) {
+      double actualKm = _distanceMeters / 1000.0;
 
-    if (existingCar != null) {
-      final double distanceKm = _distanceMeters / 1000.0;
+      // --- PREDICTIVE MAINTENANCE FORMULA ---
+      double stressFactor = 0.0;
 
-      // Create the updated car object
-      final updatedCar = Car(
-        plateNumber: existingCar.plateNumber,
-        model: existingCar.model,
-        brand: existingCar.brand,
-        // Add the new distance to the EXISTING mileage
-        currentMileage: existingCar.currentMileage + distanceKm,
-        tireSize: existingCar.tireSize,
-        engine: existingCar.engine,
-        lastService: existingCar.lastService,
-      );
+      // A. Cold Start Penalty: Trip less than 10 mins (600s)
+      if (_sessionDuration < 600) {
+        stressFactor += 1.0; // +100% wear (Engine never warmed up)
+      }
 
-      // Save it back to the same key
-      carBox.put(widget.car.key, updatedCar);
-    } else {
-      print("Error: Could not update mileage. Car not found in database.");
+      // B. Aggressive Driving Penalty: High event count per km
+      // If events happen frequently (e.g., > 5 events total in a short trip)
+      if ((_harshBrakingCount + _rapidAccelCount + _sharpTurnCount) > 5) {
+        stressFactor += 0.5; // +50% wear
+      }
+
+      double effectiveKm = actualKm * (1 + stressFactor);
+
+      // Update Car Stats
+      liveCar.currentMileage += actualKm; // Odometer shows REAL distance
+      liveCar.oilLifeRemaining -=
+          effectiveKm; // Oil Life degrades based on STRESS
+
+      if (liveCar.oilLifeRemaining < 0) liveCar.oilLifeRemaining = 0;
+
+      liveCar.save();
     }
   }
 
-  // --- PASTE THIS MISSING CODE ---
-
-  // Helper to format duration (e.g., converts 65 seconds to "00:01:05")
+  // Helpers
   String _formatDuration(int totalSeconds) {
     final duration = Duration(seconds: totalSeconds);
     String twoDigits(int n) => n.toString().padLeft(2, '0');
-    final hours = twoDigits(duration.inHours);
-    final minutes = twoDigits(duration.inMinutes.remainder(60));
-    final seconds = twoDigits(duration.inSeconds.remainder(60));
-    return "$hours:$minutes:$seconds";
+    return "${twoDigits(duration.inHours)}:${twoDigits(duration.inMinutes.remainder(60))}:${twoDigits(duration.inSeconds.remainder(60))}";
   }
 
-  // Helper widget for the top stats (Duration, Distance)
   Widget _buildStatCard(String label, String value) {
     return Column(
       children: [
@@ -217,7 +210,6 @@ class _DrivingSessionScreenState extends State<DrivingSessionScreen> {
     );
   }
 
-  // Helper widget for the event counters (Brakes, Accels, Turns)
   Widget _buildEventCard(String label, int count, Color color) {
     return Column(
       children: [
@@ -245,14 +237,13 @@ class _DrivingSessionScreenState extends State<DrivingSessionScreen> {
         title: Text('Driving: ${widget.car.plateNumber}'),
         backgroundColor: Colors.red.shade900,
         centerTitle: true,
-        automaticallyImplyLeading: false, // Remove back button
+        automaticallyImplyLeading: false,
       ),
       body: Padding(
         padding: const EdgeInsets.all(24.0),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.spaceAround,
           children: [
-            // Live Stats Grid
             Column(
               children: [
                 Text(
@@ -279,36 +270,32 @@ class _DrivingSessionScreenState extends State<DrivingSessionScreen> {
                 ),
               ],
             ),
-
-            // Event Counters
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceAround,
               children: [
                 _buildEventCard(
-                  'Harsh Brakes',
+                  'Harsh',
                   _harshBrakingCount,
                   Colors.red.shade700,
                 ),
                 _buildEventCard(
-                  'Fast Accels',
+                  'Accel',
                   _rapidAccelCount,
                   Colors.orange.shade700,
                 ),
                 _buildEventCard(
-                  'Sharp Turns',
+                  'Turns',
                   _sharpTurnCount,
                   Colors.yellow.shade700,
                 ),
               ],
             ),
-
-            // End Driving Button
             SizedBox(
               width: double.infinity,
               child: ElevatedButton(
                 onPressed: () {
                   _endSession();
-                  Navigator.of(context).pop(); // Go back to Logbook
+                  Navigator.of(context).pop();
                 },
                 style: ElevatedButton.styleFrom(
                   backgroundColor: Colors.red.shade800,

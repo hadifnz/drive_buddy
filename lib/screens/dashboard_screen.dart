@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:drive_buddy/models/car_model.dart';
 import 'package:drive_buddy/screens/chatbot_screen.dart'; // Import the chatbot
+import 'package:drive_buddy/screens/chat_selection_screen.dart'; // Import the chat selection screen
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
@@ -18,7 +19,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   // This list will hold our two main screens
   static const List<Widget> _widgetOptions = <Widget>[
     CarListScreen(), // A new widget for just the car list
-    ChatbotScreen(), // Our new chatbot screen
+    ChatSelectionScreen(), // Our new chatbot screen
   ];
 
   void _onItemTapped(int index) {
@@ -33,14 +34,18 @@ class _DashboardScreenState extends State<DashboardScreen> {
       backgroundColor: Colors.black,
       // The body will now switch between the screens in _widgetOptions
       body: Center(child: _widgetOptions.elementAt(_selectedIndex)),
-      floatingActionButton: FloatingActionButton(
-        onPressed: () {
-          Navigator.of(context).pushNamed('/add_car');
-        },
-        backgroundColor: Colors.grey.shade800,
-        child: const Icon(Icons.add, color: Colors.white),
-      ),
+      floatingActionButton: _selectedIndex == 0
+          ? FloatingActionButton(
+              onPressed: () {
+                Navigator.of(context).pushNamed('/add_car');
+              },
+              backgroundColor: Colors.grey.shade800,
+              child: const Icon(Icons.add, color: Colors.white),
+            )
+          : null, // This hides the button on the Chatbot screen
+
       floatingActionButtonLocation: FloatingActionButtonLocation.centerDocked,
+
       bottomNavigationBar: BottomNavigationBar(
         items: const <BottomNavigationBarItem>[
           BottomNavigationBarItem(

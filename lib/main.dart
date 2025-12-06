@@ -8,6 +8,7 @@ import 'package:drive_buddy/screens/logbook_screen.dart';
 import 'package:drive_buddy/screens/chatbot_screen.dart';
 import 'package:drive_buddy/screens/driving_session_screen.dart';
 import 'package:drive_buddy/models/trip_session_model.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -19,6 +20,8 @@ Future<void> main() async {
   await Hive.openBox<Car>('cars');
 
   await Hive.openBox<TripSession>('trip_sessions');
+
+  await dotenv.load(fileName: ".env");
 
   runApp(const DriveBuddyApp());
 }
@@ -51,7 +54,10 @@ class DriveBuddyApp extends StatelessWidget {
             return MaterialPageRoute(builder: (_) => LogbookScreen(car: car));
 
           case '/chatbot':
-            return MaterialPageRoute(builder: (_) => const ChatbotScreen());
+            // 1. Get the car argument
+            final car = settings.arguments as Car;
+            // 2. Pass it to the screen
+            return MaterialPageRoute(builder: (_) => ChatbotScreen(car: car));
 
           case '/driving_session':
             final car = settings.arguments as Car;
