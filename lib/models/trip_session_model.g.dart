@@ -24,13 +24,14 @@ class TripSessionAdapter extends TypeAdapter<TripSession> {
       harshBrakingCount: fields[4] as int,
       rapidAccelCount: fields[5] as int,
       sharpTurnCount: fields[6] as int,
+      routePath: (fields[7] as List?)?.cast<String>(),
     );
   }
 
   @override
   void write(BinaryWriter writer, TripSession obj) {
     writer
-      ..writeByte(7)
+      ..writeByte(8)
       ..writeByte(0)
       ..write(obj.carKey)
       ..writeByte(1)
@@ -44,7 +45,9 @@ class TripSessionAdapter extends TypeAdapter<TripSession> {
       ..writeByte(5)
       ..write(obj.rapidAccelCount)
       ..writeByte(6)
-      ..write(obj.sharpTurnCount);
+      ..write(obj.sharpTurnCount)
+      ..writeByte(7)
+      ..write(obj.routePath);
   }
 
   @override

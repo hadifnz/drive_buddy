@@ -1,13 +1,11 @@
-// lib/models/trip_session_model.dart
-
 import 'package:hive/hive.dart';
 
-part 'trip_session_model.g.dart'; // Will be generated
+part 'trip_session_model.g.dart';
 
-@HiveType(typeId: 1) // Must be a new unique ID (Car was 0)
+@HiveType(typeId: 1)
 class TripSession extends HiveObject {
   @HiveField(0)
-  late int carKey; // This links the trip to a specific Car
+  late int carKey;
 
   @HiveField(1)
   late DateTime endTimestamp;
@@ -27,6 +25,10 @@ class TripSession extends HiveObject {
   @HiveField(6)
   late int sharpTurnCount;
 
+  // --- NEW FIELD: STORE THE ROUTE ---
+  @HiveField(7)
+  List<String>? routePath; // Stored as "lat,lng" strings
+
   TripSession({
     required this.carKey,
     required this.endTimestamp,
@@ -35,5 +37,6 @@ class TripSession extends HiveObject {
     required this.harshBrakingCount,
     required this.rapidAccelCount,
     required this.sharpTurnCount,
+    this.routePath,
   });
 }

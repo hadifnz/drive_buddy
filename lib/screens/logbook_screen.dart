@@ -1,7 +1,10 @@
+// lib/screens/logbook_screen.dart
+
 import 'package:drive_buddy/models/car_model.dart';
 import 'package:flutter/material.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:drive_buddy/models/trip_session_model.dart';
+import 'package:drive_buddy/screens/session_detail_screen.dart'; // Import for Map Screen
 import 'package:intl/intl.dart';
 
 class LogbookScreen extends StatelessWidget {
@@ -9,6 +12,7 @@ class LogbookScreen extends StatelessWidget {
 
   const LogbookScreen({super.key, required this.car});
 
+  // --- DELETE LOGIC WITH ROLLBACK ---
   Future<void> _deleteTrip(BuildContext context, TripSession trip) async {
     final shouldDelete = await showDialog<bool>(
       context: context,
@@ -19,7 +23,7 @@ class LogbookScreen extends StatelessWidget {
           style: TextStyle(color: Colors.white),
         ),
         content: const Text(
-          "This will remove the trip and rollback the mileage/oil life.",
+          "This will remove the trip record and rollback your odometer and oil life. This cannot be undone.",
           style: TextStyle(color: Colors.white70),
         ),
         actions: [
@@ -37,15 +41,25 @@ class LogbookScreen extends StatelessWidget {
 
     if (shouldDelete != true) return;
 
+    // 1. Rollback Car Stats
     final carBox = Hive.box<Car>('cars');
     final liveCar = carBox.get(trip.carKey);
+
     if (liveCar != null) {
       double tripKm = trip.distanceInMeters / 1000.0;
+
+      // Subtract mileage (it never happened)
       liveCar.currentMileage -= tripKm;
-      liveCar.oilLifeRemaining += tripKm; // Give back oil life
+      // Add back oil life (we are undoing the wear)
+      liveCar.oilLifeRemaining += tripKm;
+
+      // Safety clamps
       if (liveCar.currentMileage < 0) liveCar.currentMileage = 0;
-      liveCar.save();
+
+      liveCar.save(); // Persist changes
     }
+
+    // 2. Delete Trip
     await trip.delete();
   }
 
@@ -70,6 +84,7 @@ class LogbookScreen extends StatelessWidget {
         padding: const EdgeInsets.all(24.0),
         child: Column(
           children: [
+            // 1. Plate Number Header
             Container(
               padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 40),
               decoration: BoxDecoration(
@@ -88,26 +103,29 @@ class LogbookScreen extends StatelessWidget {
             ),
             const SizedBox(height: 30),
 
-            // Car Details
+            // 2. Live Car Details
             ValueListenableBuilder(
               valueListenable: Hive.box<Car>(
                 'cars',
               ).listenable(keys: [car.key]),
               builder: (context, Box<Car> box, _) {
                 final liveCar = box.get(car.key);
-                if (liveCar == null)
+
+                if (liveCar == null) {
                   return const Text(
                     "Car data unavailable",
                     style: TextStyle(color: Colors.white),
                   );
+                }
 
+                // Determine Health Color
                 Color oilColor = Colors.green;
                 if (liveCar.oilLifeRemaining < 3000) oilColor = Colors.orange;
                 if (liveCar.oilLifeRemaining < 1000) oilColor = Colors.red;
 
                 return Column(
                   children: [
-                    // Oil Health Card
+                    // --- OIL LIFE CARD ---
                     Container(
                       padding: const EdgeInsets.all(16),
                       margin: const EdgeInsets.only(bottom: 20),
@@ -118,22 +136,33 @@ class LogbookScreen extends StatelessWidget {
                       ),
                       child: Column(
                         children: [
-                          Text(
-                            "Estimated Oil Life",
-                            style: TextStyle(
-                              color: Colors.white70,
-                              fontSize: 14,
-                            ),
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              const Text(
+                                "Oil Health",
+                                style: TextStyle(color: Colors.white70),
+                              ),
+                              Text(
+                                "${liveCar.oilType ?? 'Standard'} Oil",
+                                style: const TextStyle(
+                                  color: Colors.white38,
+                                  fontSize: 12,
+                                ),
+                              ),
+                            ],
                           ),
-                          const SizedBox(height: 8),
+                          const SizedBox(height: 10),
                           LinearProgressIndicator(
+                            // Normalize assuming 10k max for visualization
                             value: (liveCar.oilLifeRemaining / 10000).clamp(
                               0.0,
                               1.0,
                             ),
                             backgroundColor: Colors.grey.shade800,
                             color: oilColor,
-                            minHeight: 10,
+                            minHeight: 8,
+                            borderRadius: BorderRadius.circular(4),
                           ),
                           const SizedBox(height: 8),
                           Text(
@@ -141,20 +170,14 @@ class LogbookScreen extends StatelessWidget {
                             style: TextStyle(
                               color: oilColor,
                               fontWeight: FontWeight.bold,
-                              fontSize: 18,
-                            ),
-                          ),
-                          Text(
-                            "(${liveCar.oilType ?? 'Standard'} Oil)",
-                            style: TextStyle(
-                              color: Colors.white54,
-                              fontSize: 12,
+                              fontSize: 16,
                             ),
                           ),
                         ],
                       ),
                     ),
 
+                    // --- SPECS GRID ---
                     _buildDetailRow('Model', liveCar.model),
                     _buildDetailRow('Make', liveCar.brand),
                     _buildDetailRow(
@@ -176,7 +199,57 @@ class LogbookScreen extends StatelessWidget {
 
             const SizedBox(height: 40),
 
-            // Trip History
+            // 3. Dynamic Warnings (Only show if issues detected)
+            ValueListenableBuilder(
+              valueListenable: Hive.box<TripSession>(
+                'trip_sessions',
+              ).listenable(),
+              builder: (context, Box<TripSession> box, _) {
+                final trips = box.values
+                    .where((t) => t.carKey == car.key)
+                    .toList();
+
+                int harshBrakes = 0;
+                int sharpTurns = 0;
+                for (var t in trips) {
+                  harshBrakes += t.harshBrakingCount;
+                  sharpTurns += t.sharpTurnCount;
+                }
+
+                if (harshBrakes == 0 && sharpTurns == 0)
+                  return const SizedBox.shrink();
+
+                return Column(
+                  children: [
+                    const Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        'Risk Assessment',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 24,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    if (harshBrakes > 0)
+                      _buildReminderCard(
+                        'High Brake Wear Detected ($harshBrakes events)',
+                        Colors.yellow.shade700,
+                      ),
+                    if (sharpTurns > 0)
+                      _buildReminderCard(
+                        'Suspension Stress Detected ($sharpTurns events)',
+                        Colors.red.shade700,
+                      ),
+                    const SizedBox(height: 40),
+                  ],
+                );
+              },
+            ),
+
+            // 4. Trip History List
             const Align(
               alignment: Alignment.centerLeft,
               child: Text(
@@ -188,11 +261,13 @@ class LogbookScreen extends StatelessWidget {
                 ),
               ),
             ),
+            const SizedBox(height: 10),
             _buildTripHistoryList(context),
           ],
         ),
       ),
-      // Centered Start Driving Button
+
+      // 5. Start Driving Button
       bottomNavigationBar: BottomAppBar(
         color: Colors.black,
         height: 100,
@@ -216,29 +291,53 @@ class LogbookScreen extends StatelessWidget {
     );
   }
 
+  // --- WIDGET HELPERS ---
+
   Widget _buildDetailRow(String label, String value) {
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8.0),
+      padding: const EdgeInsets.symmetric(vertical: 6.0),
       child: Row(
         children: [
           SizedBox(
             width: 100,
             child: Text(
               '$label :',
-              style: const TextStyle(color: Colors.white, fontSize: 16),
+              style: const TextStyle(color: Colors.white54, fontSize: 16),
             ),
           ),
           Expanded(
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-              decoration: BoxDecoration(
-                color: Colors.grey.shade900,
-                borderRadius: BorderRadius.circular(12),
+            child: Text(
+              value,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 16,
+                fontWeight: FontWeight.w500,
               ),
-              child: Text(
-                value,
-                style: const TextStyle(color: Colors.white, fontSize: 16),
-              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildReminderCard(String text, Color color) {
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.symmetric(vertical: 6),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.2), // Transparent background
+        border: Border.all(color: color),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.warning_amber_rounded, color: color),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              text,
+              style: TextStyle(color: color, fontWeight: FontWeight.bold),
             ),
           ),
         ],
@@ -253,16 +352,19 @@ class LogbookScreen extends StatelessWidget {
         final trips = box.values
             .where((trip) => trip.carKey == car.key)
             .toList();
+
+        // Sort: Newest first
         trips.sort((a, b) => b.endTimestamp.compareTo(a.endTimestamp));
 
-        if (trips.isEmpty)
+        if (trips.isEmpty) {
           return const Padding(
             padding: EdgeInsets.all(24.0),
             child: Text(
               'No trips recorded yet.',
-              style: TextStyle(color: Colors.white54, fontSize: 16),
+              style: TextStyle(color: Colors.white38, fontSize: 16),
             ),
           );
+        }
 
         return ListView.builder(
           itemCount: trips.length,
@@ -278,42 +380,90 @@ class LogbookScreen extends StatelessWidget {
 
   Widget _buildTripCard(BuildContext context, TripSession trip) {
     final date = DateFormat('MMM d, yyyy').format(trip.endTimestamp);
+    final time = DateFormat('h:mm a').format(trip.endTimestamp);
     final distanceKm = (trip.distanceInMeters / 1000).toStringAsFixed(1);
 
-    return Container(
-      margin: const EdgeInsets.symmetric(vertical: 8),
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.grey.shade900,
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Column(
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(
-                date,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold,
+    // Total 'Bad' Events
+    final totalEvents =
+        trip.harshBrakingCount + trip.rapidAccelCount + trip.sharpTurnCount;
+    Color statusColor = Colors.green;
+    if (totalEvents > 2) statusColor = Colors.orange;
+    if (totalEvents > 5) statusColor = Colors.red;
+
+    return GestureDetector(
+      onTap: () {
+        // Navigate to the Map Analysis Screen
+        Navigator.of(context).push(
+          MaterialPageRoute(builder: (_) => SessionDetailScreen(trip: trip)),
+        );
+      },
+      child: Container(
+        margin: const EdgeInsets.symmetric(vertical: 8),
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: Colors.grey.shade900,
+          borderRadius: BorderRadius.circular(12),
+          border: Border(
+            left: BorderSide(color: statusColor, width: 4),
+          ), // Status Indicator
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  "$date  •  $time",
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
-              ),
-              IconButton(
-                icon: const Icon(Icons.delete_outline, color: Colors.redAccent),
-                onPressed: () => _deleteTrip(context, trip),
-              ),
-            ],
-          ),
-          Align(
-            alignment: Alignment.centerLeft,
-            child: Text(
-              '$distanceKm km',
-              style: const TextStyle(color: Colors.white70, fontSize: 16),
+                // Delete Button
+                IconButton(
+                  icon: const Icon(
+                    Icons.delete_outline,
+                    color: Colors.white38,
+                    size: 20,
+                  ),
+                  onPressed: () => _deleteTrip(context, trip),
+                  padding: EdgeInsets.zero,
+                  constraints:
+                      const BoxConstraints(), // Removes default padding
+                ),
+              ],
             ),
-          ),
-        ],
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                const Icon(Icons.map, color: Colors.blueAccent, size: 16),
+                const SizedBox(width: 6),
+                Text(
+                  "$distanceKm km",
+                  style: const TextStyle(color: Colors.white70),
+                ),
+                const SizedBox(width: 16),
+                if (totalEvents > 0) ...[
+                  Icon(Icons.warning, color: statusColor, size: 16),
+                  const SizedBox(width: 6),
+                  Text(
+                    "$totalEvents alerts",
+                    style: TextStyle(color: statusColor),
+                  ),
+                ] else
+                  const Text(
+                    "Clean Drive",
+                    style: TextStyle(color: Colors.green, fontSize: 12),
+                  ),
+
+                const Spacer(),
+                const Icon(Icons.chevron_right, color: Colors.white24),
+              ],
+            ),
+          ],
+        ),
       ),
     );
   }
