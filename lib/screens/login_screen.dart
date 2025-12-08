@@ -1,6 +1,7 @@
-// lib/screens/login_screen.dart
-
 import 'package:flutter/material.dart';
+import 'package:hive_flutter/hive_flutter.dart';
+import 'package:drive_buddy/models/user_model.dart';
+import 'package:drive_buddy/screens/register_screen.dart'; // Import Register
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -10,23 +11,39 @@ class LoginScreen extends StatefulWidget {
 }
 
 class _LoginScreenState extends State<LoginScreen> {
-  // Controllers to manage the text in TextFields
   final _usernameController = TextEditingController();
   final _passwordController = TextEditingController();
 
-  @override
-  void dispose() {
-    // Clean up the controllers when the widget is disposed
-    _usernameController.dispose();
-    _passwordController.dispose();
-    super.dispose();
+  void _login() {
+    final username = _usernameController.text.trim();
+    final password = _passwordController.text;
+
+    final userBox = Hive.box<User>('users');
+    
+    // 1. Find user in database
+    try {
+      final user = userBox.values.firstWhere(
+        (u) => u.username == username && u.password == password
+      );
+
+      // 2. Save "Logged In" state
+      final sessionBox = Hive.box('session_data');
+      sessionBox.put('currentUserKey', user.key); // Save the Hive Key
+
+      // 3. Navigate
+      Navigator.of(context).pushReplacementNamed('/dashboard');
+      
+    } catch (e) {
+      // If firstWhere fails, it throws an error (User not found)
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Invalid Username or Password")),
+      );
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-    // Using a Scaffold to provide a standard app layout
     return Scaffold(
-      // Setting a dark background color as per your design
       backgroundColor: Colors.black,
       body: SafeArea(
         child: Center(
@@ -35,116 +52,62 @@ class _LoginScreenState extends State<LoginScreen> {
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                // 1. App Title [cite: 595]
+                const Icon(Icons.directions_car, color: Colors.white, size: 120),
+                const SizedBox(height: 20),
                 const Text(
                   'DRIVE BUDDY',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 36,
-                    fontWeight: FontWeight.bold,
-                    letterSpacing: 2.0,
+                  style: TextStyle(color: Colors.white, fontSize: 36, fontWeight: FontWeight.bold, letterSpacing: 2.0),
+                ),
+                const SizedBox(height: 50),
+                TextField(
+                  controller: _usernameController,
+                  style: const TextStyle(color: Colors.white),
+                  decoration: InputDecoration(
+                    labelText: 'Username',
+                    filled: true, fillColor: Colors.grey.shade900,
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
                   ),
                 ),
-                const SizedBox(height: 30),
-
-                // 2. Car Image (Using a placeholder for now)
-                // You can replace 'assets/car.png' with your actual image path
-                // Image.asset('assets/car.png', height: 150),
-                const Icon(Icons.directions_car, color: Colors.white, size: 120),
-                const SizedBox(height: 50),
-
-                // 3. Username TextField [cite: 588]
-                _buildTextField(
-                    controller: _usernameController,
-                    labelText: 'Username',
-                ),
                 const SizedBox(height: 20),
-
-                // 4. Password TextField [cite: 589]
-                _buildTextField(
-                    controller: _passwordController,
+                TextField(
+                  controller: _passwordController,
+                  obscureText: true,
+                  style: const TextStyle(color: Colors.white),
+                  decoration: InputDecoration(
                     labelText: 'Password',
-                    isObscure: true, // Hides the password text
+                    filled: true, fillColor: Colors.grey.shade900,
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                  ),
                 ),
                 const SizedBox(height: 40),
-
-                // 5. Log In Button [cite: 596]
-                _buildButton(text: 'Log In', isPrimary: true, onPressed: () {
-                    // Navigate using the named route
-                    Navigator.of(context).pushReplacementNamed('/dashboard');
-                }),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    onPressed: _login,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                    ),
+                    child: const Text('Log In', style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
+                  ),
+                ),
                 const SizedBox(height: 15),
-
-                // 6. Sign Up Button [cite: 597]
-                _buildButton(text: 'Sign Up', isPrimary: false, onPressed: () {
-                  // TODO: Navigate to registration screen
-                }),
-                const SizedBox(height: 20),
-
-                // 7. Forgot Password Link [cite: 598]
-                Text(
-                  'Forgot Password?',
-                  style: TextStyle(
-                    color: Colors.white.withOpacity(0.7),
-                    decoration: TextDecoration.underline,
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    onPressed: () {
+                      Navigator.push(context, MaterialPageRoute(builder: (_) => const RegisterScreen()));
+                    },
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.grey.shade800,
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                    ),
+                    child: const Text('Sign Up', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
                   ),
                 ),
               ],
             ),
           ),
-        ),
-      ),
-    );
-  }
-
-  // Helper widget for TextFields to avoid code repetition
-  Widget _buildTextField({
-    required TextEditingController controller,
-    required String labelText,
-    bool isObscure = false,
-  }) {
-    return TextField(
-      controller: controller,
-      obscureText: isObscure,
-      style: const TextStyle(color: Colors.white),
-      decoration: InputDecoration(
-        labelText: labelText,
-        labelStyle: TextStyle(color: Colors.white.withOpacity(0.7)),
-        filled: true,
-        fillColor: Colors.grey.shade900,
-        enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
-          borderSide: BorderSide.none,
-        ),
-        focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
-          borderSide: const BorderSide(color: Colors.white),
-        ),
-      ),
-    );
-  }
-  
-  // Helper widget for Buttons
-  Widget _buildButton({
-    required String text,
-    required bool isPrimary,
-    required VoidCallback onPressed,
-  }) {
-    return SizedBox(
-      width: double.infinity,
-      child: ElevatedButton(
-        onPressed: onPressed,
-        style: ElevatedButton.styleFrom(
-          backgroundColor: isPrimary ? Colors.white : Colors.grey.shade800,
-          foregroundColor: isPrimary ? Colors.black : Colors.white,
-          padding: const EdgeInsets.symmetric(vertical: 16),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(12),
-          ),
-        ),
-        child: Text(
-          text,
-          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
         ),
       ),
     );
