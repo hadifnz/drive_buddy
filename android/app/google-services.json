@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "8688693178",
+    "project_id": "drive-buddy-baf82",
+    "storage_bucket": "drive-buddy-baf82.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:8688693178:android:1eaccb28bc40046a4cf783",
+        "android_client_info": {
+          "package_name": "com.example.drive_buddy"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyB0uWMQwgFgkDIHov4UbzaHr2YY68aEcRE"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

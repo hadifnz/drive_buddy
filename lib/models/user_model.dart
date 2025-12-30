@@ -1,29 +1,30 @@
-import 'package:hive/hive.dart';
+// lib/models/user_model.dart
 
-part 'user_model.g.dart';
+class UserModel {
+  final String id;
+  final String fullName;
+  final String email;
+  final String phone;
 
-@HiveType(typeId: 2) // We use ID 2 (Car was 0, TripSession was 1)
-class User extends HiveObject {
-  @HiveField(0)
-  late String username;
-
-  @HiveField(1)
-  late String password; // In a real app, hash this! For thesis, plain text is okay.
-
-  @HiveField(2)
-  late String fullName;
-
-  @HiveField(3)
-  late String email;
-
-  @HiveField(4)
-  late String phone;
-
-  User({
-    required this.username,
-    required this.password,
+  UserModel({
+    required this.id,
     required this.fullName,
     required this.email,
     required this.phone,
   });
+
+  // Factory: Create User from Firestore Data
+  factory UserModel.fromMap(Map<String, dynamic> data, String documentId) {
+    return UserModel(
+      id: documentId,
+      fullName: data['fullName'] ?? '',
+      email: data['email'] ?? '',
+      phone: data['phone'] ?? '',
+    );
+  }
+
+  // Method: Convert User to Map for Uploading (if needed)
+  Map<String, dynamic> toMap() {
+    return {'fullName': fullName, 'email': email, 'phone': phone};
+  }
 }

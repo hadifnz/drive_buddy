@@ -1,44 +1,22 @@
-import 'package:hive/hive.dart';
+// lib/models/car_model.dart
 
-part 'car_model.g.dart';
-
-@HiveType(typeId: 0)
-class Car extends HiveObject {
-  @HiveField(0)
-  late String plateNumber;
-
-  @HiveField(1)
-  late String model;
-
-  @HiveField(2)
-  late String brand;
-
-  @HiveField(3)
-  late double currentMileage;
-
-  @HiveField(4)
-  String? tireSize;
-
-  @HiveField(5)
-  String? engine; // Engine Code
-
-  @HiveField(6)
-  String? lastService;
-
-  // --- NEW FIELDS ---
-  @HiveField(7)
-  String? oilType; // "Mineral", "Semi", "Fully"
-
-  @HiveField(8)
-  late double oilLifeRemaining;
-
-  @HiveField(9)
-  String? engineCapacity; // e.g. "1.5L"
-
-  @HiveField(10)
-  String? transmissionType; // "Auto", "Manual", "CVT"
+class Car {
+  final String id; // Firestore Document ID
+  final String plateNumber;
+  final String model;
+  final String brand;
+  double currentMileage;
+  final String? tireSize;
+  final String? engine;
+  final String? lastService;
+  final String? oilType;
+  double oilLifeRemaining;
+  final String? engineCapacity;
+  final String? transmissionType;
+  final String ownerId; // Links this car to a specific user
 
   Car({
+    required this.id,
     required this.plateNumber,
     required this.model,
     required this.brand,
@@ -50,5 +28,43 @@ class Car extends HiveObject {
     this.oilLifeRemaining = 10000.0,
     this.engineCapacity,
     this.transmissionType,
+    required this.ownerId,
   });
+
+  // Factory: Create Car from Firestore Map
+  factory Car.fromMap(Map<String, dynamic> data, String documentId) {
+    return Car(
+      id: documentId,
+      plateNumber: data['plateNumber'] ?? '',
+      model: data['model'] ?? '',
+      brand: data['brand'] ?? '',
+      currentMileage: (data['currentMileage'] ?? 0).toDouble(),
+      tireSize: data['tireSize'],
+      engine: data['engine'],
+      lastService: data['lastService'],
+      oilType: data['oilType'],
+      oilLifeRemaining: (data['oilLifeRemaining'] ?? 10000).toDouble(),
+      engineCapacity: data['engineCapacity'],
+      transmissionType: data['transmissionType'],
+      ownerId: data['ownerId'] ?? '',
+    );
+  }
+
+  // Method: Convert Car to Map (for Uploading)
+  Map<String, dynamic> toMap() {
+    return {
+      'plateNumber': plateNumber,
+      'model': model,
+      'brand': brand,
+      'currentMileage': currentMileage,
+      'tireSize': tireSize,
+      'engine': engine,
+      'lastService': lastService,
+      'oilType': oilType,
+      'oilLifeRemaining': oilLifeRemaining,
+      'engineCapacity': engineCapacity,
+      'transmissionType': transmissionType,
+      'ownerId': ownerId,
+    };
+  }
 }

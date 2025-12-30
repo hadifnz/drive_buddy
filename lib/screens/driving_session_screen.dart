@@ -1,16 +1,15 @@
 // lib/screens/driving_session_screen.dart
 
 import 'dart:async';
-import 'dart:math'; // For sqrt() calculation
-import 'dart:io' show Platform; // For Platform check
+import 'dart:math';
+import 'dart:io' show Platform;
 
+import 'package:cloud_firestore/cloud_firestore.dart'; // NEW
 import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:sensors_plus/sensors_plus.dart';
-import 'package:hive_flutter/hive_flutter.dart';
 
-// Import your models
 import 'package:drive_buddy/models/car_model.dart';
 import 'package:drive_buddy/models/trip_session_model.dart';
 
@@ -23,29 +22,26 @@ class DrivingSessionScreen extends StatefulWidget {
 }
 
 class _DrivingSessionScreenState extends State<DrivingSessionScreen> {
-  // Stream Subscriptions
+  // Streams & Timers
   StreamSubscription? _positionStream;
   StreamSubscription? _accelerometerStream;
   StreamSubscription? _gyroscopeStream;
   Timer? _timer;
 
-  // Live Session Data
-  int _sessionDuration = 0; // seconds
+  // Session Data
+  int _sessionDuration = 0;
   double _speedKmh = 0;
   double _distanceMeters = 0;
   Position? _lastPosition;
-
-  // Route Recording (New for Map)
   final List<String> _recordedPath = [];
 
-  // Behavior Event Counters
+  // Events
   int _harshBrakingCount = 0;
   int _rapidAccelCount = 0;
   int _sharpTurnCount = 0;
 
-  // Logic Flags
-  bool _isDetectingEvents = true; // For throttling events
-  bool _isSessionSaved = false; // To prevent double saving
+  bool _isDetectingEvents = true;
+  bool _isSessionSaved = false;
 
   @override
   void initState() {
@@ -55,35 +51,35 @@ class _DrivingSessionScreenState extends State<DrivingSessionScreen> {
 
   @override
   void dispose() {
-    _endSession(); // Ensure session is saved if user swipes back or closes app
+    // Safety: Try to end session if user swipes back,
+    // but in cloud apps, it's safer to require explicit "End" button
+    // to avoid partial uploads. We cancel streams here.
+    _timer?.cancel();
+    _positionStream?.cancel();
+    _accelerometerStream?.cancel();
+    _gyroscopeStream?.cancel();
     super.dispose();
   }
 
   Future<void> _startSession() async {
-    // Only run sensors on mobile platforms
     if (Platform.isAndroid || Platform.isIOS) {
-      // 1. Request GPS Permission
       if (await Permission.location.request().isGranted) {
-        // 2. Start Timer
+        // 1. Timer
         _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
-          if (mounted) {
-            setState(() => _sessionDuration++);
-          }
+          if (mounted) setState(() => _sessionDuration++);
         });
 
-        // 3. Start GPS Stream
+        // 2. GPS Stream
         _positionStream =
             Geolocator.getPositionStream(
               locationSettings: const LocationSettings(
                 accuracy: LocationAccuracy.bestForNavigation,
-                distanceFilter:
-                    10, // Update every 10 meters to save battery/storage
+                distanceFilter: 10,
               ),
             ).listen((Position position) {
               if (mounted) {
                 setState(() {
-                  _speedKmh = position.speed * 3.6; // Convert m/s to km/h
-
+                  _speedKmh = position.speed * 3.6;
                   if (_lastPosition != null) {
                     _distanceMeters += Geolocator.distanceBetween(
                       _lastPosition!.latitude,
@@ -93,9 +89,6 @@ class _DrivingSessionScreenState extends State<DrivingSessionScreen> {
                     );
                   }
                   _lastPosition = position;
-
-                  // --- RECORD PATH FOR MAP ---
-                  // Store as "lat,lng" string
                   _recordedPath.add(
                     "${position.latitude},${position.longitude}",
                   );
@@ -103,49 +96,38 @@ class _DrivingSessionScreenState extends State<DrivingSessionScreen> {
               }
             });
 
-        // 4. Start Accelerometer (Orientation Independent Logic)
+        // 3. Accelerometer (G-Force)
         _accelerometerStream = userAccelerometerEvents.listen((event) {
           if (!_isDetectingEvents) return;
-
-          // Calculate Vector Magnitude: sqrt(x^2 + y^2 + z^2)
-          // This works regardless of whether phone is in pocket, cup holder, or mount.
           double magnitude = sqrt(
             (event.x * event.x) + (event.y * event.y) + (event.z * event.z),
           );
 
-          // Threshold: > 4.0 m/s^2 indicates significant G-Force
           if (magnitude > 4.0) {
-            // Since we don't know orientation, we count high G-Force as a "Stress Event".
-            // We categorize it as Accel for simplicity in this mode, or you could split logic.
-            // For this implementation, we'll increment Rapid Accel for general high stress.
             setState(() => _rapidAccelCount++);
             _throttleEvents();
           }
-
-          // Legacy support: If phone IS mounted upright, we can still detect braking specifically
           if (event.z < -6.0) {
+            // Specific braking check if phone is upright
             setState(() => _harshBrakingCount++);
             _throttleEvents();
           }
         });
 
-        // 5. Start Gyroscope (Turns)
+        // 4. Gyroscope (Turns)
         _gyroscopeStream = gyroscopeEvents.listen((event) {
           if (!_isDetectingEvents) return;
-          // Check rotation on Y axis (yaw)
           if (event.y.abs() > 2.5) {
             setState(() => _sharpTurnCount++);
             _throttleEvents();
           }
         });
       } else {
-        // Permission denied
         if (mounted) Navigator.of(context).pop();
       }
     }
   }
 
-  // Prevents one event from triggering multiple times in a split second
   void _throttleEvents() {
     _isDetectingEvents = false;
     Future.delayed(const Duration(seconds: 3), () {
@@ -153,69 +135,163 @@ class _DrivingSessionScreenState extends State<DrivingSessionScreen> {
     });
   }
 
-  // --- END SESSION & SAVE DATA ---
-  void _endSession() {
-    // 1. Prevent Double Save
+  Future<void> _endSession() async {
     if (_isSessionSaved) return;
     _isSessionSaved = true;
 
-    // 2. Stop Streams
+    // 1. Stop Recording
     _timer?.cancel();
     _positionStream?.cancel();
     _accelerometerStream?.cancel();
     _gyroscopeStream?.cancel();
 
-    // 3. Create Trip Record
-    final newTrip = TripSession(
-      carKey: widget.car.key,
-      endTimestamp: DateTime.now(),
-      durationInSeconds: _sessionDuration,
-      distanceInMeters: _distanceMeters,
-      harshBrakingCount: _harshBrakingCount,
-      rapidAccelCount: _rapidAccelCount,
-      sharpTurnCount: _sharpTurnCount,
-      routePath: _recordedPath, // <--- SAVING THE MAP ROUTE
+    // Show loading indicator
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => const Center(child: CircularProgressIndicator()),
     );
 
-    // Save to Hive
-    Hive.box<TripSession>('trip_sessions').add(newTrip);
+    try {
+      // 2. Prepare Trip Data
+      final newTrip = TripSession(
+        id: '', // Firestore generates this
+        carId: widget.car.id, // LINK TO CAR
+        endTimestamp: DateTime.now(),
+        durationInSeconds: _sessionDuration,
+        distanceInMeters: _distanceMeters,
+        harshBrakingCount: _harshBrakingCount,
+        rapidAccelCount: _rapidAccelCount,
+        sharpTurnCount: _sharpTurnCount,
+        routePath: _recordedPath,
+      );
 
-    // 4. Update Car Health (Predictive Maintenance Logic)
-    final carBox = Hive.box<Car>('cars');
-    final liveCar = carBox.get(widget.car.key);
+      // 3. Upload Trip to Firestore
+      await FirebaseFirestore.instance.collection('trips').add(newTrip.toMap());
 
-    if (liveCar != null) {
+      // 4. Calculate Wear & Update Car Mileage
       double actualKm = _distanceMeters / 1000.0;
-
-      // --- STRESS FACTOR CALCULATION ---
       double stressFactor = 0.0;
 
-      // A. Cold Start Penalty: Trip less than 10 mins (600s)
-      if (_sessionDuration < 600) {
-        stressFactor += 1.0; // +100% wear (Engine oil didn't warm up)
-      }
+      if (_sessionDuration < 600) stressFactor += 1.0; // Cold start
+      if ((_harshBrakingCount + _rapidAccelCount + _sharpTurnCount) > 5)
+        stressFactor += 0.5;
 
-      // B. Aggressive Penalty: Many events
-      if ((_harshBrakingCount + _rapidAccelCount + _sharpTurnCount) > 5) {
-        stressFactor += 0.5; // +50% wear
-      }
-
-      // Effective KM is usually higher than Actual KM
       double effectiveKm = actualKm * (1 + stressFactor);
 
-      // Update Car
-      liveCar.currentMileage += actualKm; // Odometer is Real
-      liveCar.oilLifeRemaining -= effectiveKm; // Health is Effective
+      // 5. Update the Car Document in Firestore
+      // We use FieldValue.increment to allow safe concurrent updates
+      await FirebaseFirestore.instance
+          .collection('cars')
+          .doc(widget.car.id)
+          .update({
+            'currentMileage': FieldValue.increment(actualKm),
+            'oilLifeRemaining': FieldValue.increment(-effectiveKm),
+          });
 
-      // Clamp to 0
-      if (liveCar.oilLifeRemaining < 0) liveCar.oilLifeRemaining = 0;
-
-      liveCar.save(); // Persist changes
+      if (mounted) {
+        Navigator.of(context).pop(); // Close loading dialog
+        Navigator.of(context).pop(); // Close driving screen
+      }
+    } catch (e) {
+      if (mounted) {
+        Navigator.of(context).pop(); // Close loading dialog
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text("Upload failed: $e")));
+      }
     }
   }
 
-  // --- UI HELPERS ---
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      appBar: AppBar(
+        title: Text('Driving: ${widget.car.plateNumber}'),
+        backgroundColor: Colors.red.shade900,
+        centerTitle: true,
+        automaticallyImplyLeading: false,
+      ),
+      body: Padding(
+        padding: const EdgeInsets.all(24.0),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.spaceAround,
+          children: [
+            Column(
+              children: [
+                Text(
+                  _speedKmh.toStringAsFixed(1),
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 96,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const Text(
+                  'km/h',
+                  style: TextStyle(color: Colors.white, fontSize: 24),
+                ),
+              ],
+            ),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceAround,
+              children: [
+                _buildStatCard('Duration', _formatDuration(_sessionDuration)),
+                _buildStatCard(
+                  'Distance',
+                  '${(_distanceMeters / 1000).toStringAsFixed(2)} km',
+                ),
+              ],
+            ),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceAround,
+              children: [
+                _buildEventCard(
+                  'Harsh',
+                  _harshBrakingCount,
+                  Colors.red.shade700,
+                ),
+                _buildEventCard(
+                  'Accel',
+                  _rapidAccelCount,
+                  Colors.orange.shade700,
+                ),
+                _buildEventCard(
+                  'Turns',
+                  _sharpTurnCount,
+                  Colors.yellow.shade700,
+                ),
+              ],
+            ),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: _endSession, // Trigger Cloud Save
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.red.shade800,
+                  padding: const EdgeInsets.symmetric(vertical: 20),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+                child: const Text(
+                  'End Driving (Save to Cloud)',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 
+  // --- UI Helpers ---
   String _formatDuration(int totalSeconds) {
     final duration = Duration(seconds: totalSeconds);
     String twoDigits(int n) => n.toString().padLeft(2, '0');
@@ -257,105 +333,6 @@ class _DrivingSessionScreenState extends State<DrivingSessionScreen> {
           style: TextStyle(color: color.withOpacity(0.8), fontSize: 14),
         ),
       ],
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.black,
-      appBar: AppBar(
-        title: Text('Driving: ${widget.car.plateNumber}'),
-        backgroundColor: Colors.red.shade900,
-        centerTitle: true,
-        automaticallyImplyLeading:
-            false, // Prevents accidental back button press
-      ),
-      body: Padding(
-        padding: const EdgeInsets.all(24.0),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.spaceAround,
-          children: [
-            // Speedometer Area
-            Column(
-              children: [
-                Text(
-                  _speedKmh.toStringAsFixed(1),
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 96,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                const Text(
-                  'km/h',
-                  style: TextStyle(color: Colors.white, fontSize: 24),
-                ),
-              ],
-            ),
-
-            // Stats Row
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceAround,
-              children: [
-                _buildStatCard('Duration', _formatDuration(_sessionDuration)),
-                _buildStatCard(
-                  'Distance',
-                  '${(_distanceMeters / 1000).toStringAsFixed(2)} km',
-                ),
-              ],
-            ),
-
-            // Events Row
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceAround,
-              children: [
-                _buildEventCard(
-                  'Harsh',
-                  _harshBrakingCount,
-                  Colors.red.shade700,
-                ),
-                _buildEventCard(
-                  'Accel',
-                  _rapidAccelCount,
-                  Colors.orange.shade700,
-                ),
-                _buildEventCard(
-                  'Turns',
-                  _sharpTurnCount,
-                  Colors.yellow.shade700,
-                ),
-              ],
-            ),
-
-            // End Button
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton(
-                onPressed: () {
-                  _endSession(); // Trigger save
-                  Navigator.of(context).pop(); // Close screen
-                },
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.red.shade800,
-                  padding: const EdgeInsets.symmetric(vertical: 20),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                ),
-                child: const Text(
-                  'End Driving',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
     );
   }
 }

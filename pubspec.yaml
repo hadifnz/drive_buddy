@@ -21,20 +21,17 @@ version: 1.0.0+1
 environment:
   sdk: ^3.9.2
 
-# Dependencies specify other packages that your package needs in order to work.
-# To automatically upgrade your package dependencies to the latest versions
-# consider running `flutter pub upgrade --major-versions`. Alternatively,
-# dependencies can be manually updated by changing the version numbers below to
-# the latest version available on pub.dev. To see which dependencies have newer
-# versions available, run `flutter pub outdated`.
 dependencies:
   flutter:
     sdk: flutter
 
   geolocator: ^11.0.0            # For GPS functionality
   sensors_plus: ^5.0.1           # For accelerometer and gyroscope access
-  hive: ^2.2.3                   # For local, offline database storage
-  hive_flutter: ^1.1.0           # Flutter extension for Hive
+  
+  firebase_core: ^3.6.0
+  firebase_auth: ^5.3.1
+  cloud_firestore: ^5.4.4
+
   provider: ^6.1.2               # For state management
   permission_handler: ^11.3.1    # To request sensor/location permissions
   intl: ^0.18.1
@@ -74,6 +71,7 @@ flutter:
 
   assets:
     - .env
+    - assets/
 
 uses-material-design: true
 

@@ -1,10 +1,9 @@
 // lib/screens/session_detail_screen.dart
 
-import 'package:drive_buddy/models/trip_session_model.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_map/flutter_map.dart'; // Map widget
-import 'package:latlong2/latlong.dart'; // Coordinate handling
-import 'package:intl/intl.dart';
+import 'package:flutter_map/flutter_map.dart';
+import 'package:latlong2/latlong.dart';
+import 'package:drive_buddy/models/trip_session_model.dart';
 
 class SessionDetailScreen extends StatelessWidget {
   final TripSession trip;
@@ -13,7 +12,8 @@ class SessionDetailScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // 1. Convert stored strings "lat,lng" back to LatLng objects
+    // 1. Convert "lat,lng" strings back to LatLng objects
+    // Note: routePath is now nullable List<String>?, so we handle it safely
     final List<LatLng> routePoints =
         trip.routePath?.map((point) {
           final split = point.split(',');
@@ -21,10 +21,10 @@ class SessionDetailScreen extends StatelessWidget {
         }).toList() ??
         [];
 
-    // Calculate center of map (or default to a generic location if empty)
+    // Calculate center
     final center = routePoints.isNotEmpty
         ? routePoints[routePoints.length ~/ 2]
-        : const LatLng(3.140853, 101.693207); // Default to KL
+        : const LatLng(3.140853, 101.693207);
 
     return Scaffold(
       backgroundColor: Colors.black,
@@ -38,14 +38,13 @@ class SessionDetailScreen extends StatelessWidget {
       ),
       body: Column(
         children: [
-          // --- MAP SECTION ---
+          // Map
           SizedBox(
             height: 350,
             child: FlutterMap(
               options: MapOptions(initialCenter: center, initialZoom: 14.0),
               children: [
                 TileLayer(
-                  // Using OpenStreetMap (Free, No API Key needed)
                   urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
                   userAgentPackageName: 'com.example.drive_buddy',
                 ),
@@ -58,7 +57,6 @@ class SessionDetailScreen extends StatelessWidget {
                     ),
                   ],
                 ),
-                // Add Markers for Start and End
                 if (routePoints.isNotEmpty)
                   MarkerLayer(
                     markers: [
@@ -84,7 +82,7 @@ class SessionDetailScreen extends StatelessWidget {
             ),
           ),
 
-          // --- STATS SECTION ---
+          // Stats
           Expanded(
             child: SingleChildScrollView(
               padding: const EdgeInsets.all(20),
@@ -100,8 +98,6 @@ class SessionDetailScreen extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(height: 20),
-
-                  // Big Stats Row
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
@@ -116,7 +112,6 @@ class SessionDetailScreen extends StatelessWidget {
                     ],
                   ),
                   const Divider(color: Colors.grey, height: 40),
-
                   const Text(
                     "Harsh Event Detection",
                     style: TextStyle(
@@ -126,8 +121,6 @@ class SessionDetailScreen extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(height: 15),
-
-                  // Events Grid
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
@@ -147,22 +140,6 @@ class SessionDetailScreen extends StatelessWidget {
                         Colors.yellow,
                       ),
                     ],
-                  ),
-
-                  const SizedBox(height: 20),
-                  Container(
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: Colors.grey.shade900,
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: const Text(
-                      "Tip: High harsh braking counts significantly reduce the lifespan of your brake pads and rotors.",
-                      style: TextStyle(
-                        color: Colors.white70,
-                        fontStyle: FontStyle.italic,
-                      ),
-                    ),
                   ),
                 ],
               ),

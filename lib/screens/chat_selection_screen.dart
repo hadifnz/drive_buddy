@@ -1,7 +1,8 @@
 // lib/screens/chat_selection_screen.dart
 
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
-import 'package:hive_flutter/hive_flutter.dart';
 import 'package:drive_buddy/models/car_model.dart';
 
 class ChatSelectionScreen extends StatelessWidget {
@@ -9,54 +10,59 @@ class ChatSelectionScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return const Center(child: Text("Please Login"));
+
     return Scaffold(
       backgroundColor: Colors.black,
-      appBar: AppBar(
-        title: const Text(
-          'Select Vehicle',
-          style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-        ),
-        backgroundColor: Colors.black,
-        centerTitle: true,
-        automaticallyImplyLeading: false, // Hide back button if it's a tab
-      ),
-      body: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              'Which car needs help?',
-              style: TextStyle(color: Colors.white70, fontSize: 18),
+      // We don't need an AppBar here if it's a tab,
+      // but if it's standalone, keep it.
+      // Assuming it's a tab in Dashboard, we just return the body content.
+      body: Column(
+        children: [
+          const Padding(
+            padding: EdgeInsets.all(24.0),
+            child: Text(
+              "Select a car to chat with AI mechanic",
+              style: TextStyle(color: Colors.white54, fontSize: 16),
             ),
-            const SizedBox(height: 20),
-            Expanded(
-              child: ValueListenableBuilder(
-                valueListenable: Hive.box<Car>('cars').listenable(),
-                builder: (context, Box<Car> box, _) {
-                  final cars = box.values.toList().cast<Car>();
+          ),
+          Expanded(
+            child: StreamBuilder<QuerySnapshot>(
+              stream: FirebaseFirestore.instance
+                  .collection('cars')
+                  .where('ownerId', isEqualTo: user.uid)
+                  .snapshots(),
+              builder: (context, snapshot) {
+                if (snapshot.connectionState == ConnectionState.waiting) {
+                  return const Center(child: CircularProgressIndicator());
+                }
 
-                  if (cars.isEmpty) {
-                    return const Center(
-                      child: Text(
-                        "No cars added yet.",
-                        style: TextStyle(color: Colors.white),
-                      ),
-                    );
-                  }
+                final docs = snapshot.data?.docs ?? [];
 
-                  return ListView.builder(
-                    itemCount: cars.length,
-                    itemBuilder: (context, index) {
-                      final car = cars[index];
-                      return _buildCarTile(context, car);
-                    },
+                if (docs.isEmpty) {
+                  return const Center(
+                    child: Text(
+                      "No cars found.",
+                      style: TextStyle(color: Colors.white),
+                    ),
                   );
-                },
-              ),
+                }
+
+                return ListView.builder(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  itemCount: docs.length,
+                  itemBuilder: (context, index) {
+                    final data = docs[index].data() as Map<String, dynamic>;
+                    final car = Car.fromMap(data, docs[index].id);
+
+                    return _buildCarTile(context, car);
+                  },
+                );
+              },
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
@@ -64,32 +70,31 @@ class ChatSelectionScreen extends StatelessWidget {
   Widget _buildCarTile(BuildContext context, Car car) {
     return Card(
       color: Colors.grey.shade900,
-      margin: const EdgeInsets.symmetric(vertical: 8),
+      margin: const EdgeInsets.only(bottom: 12),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       child: ListTile(
-        contentPadding: const EdgeInsets.all(16),
         leading: const CircleAvatar(
-          backgroundColor: Colors.blueGrey,
-          child: Icon(Icons.directions_car, color: Colors.white),
+          backgroundColor: Colors.black,
+          child: Icon(Icons.smart_toy, color: Colors.blueAccent),
         ),
         title: Text(
           car.plateNumber,
           style: const TextStyle(
             color: Colors.white,
-            fontSize: 18,
             fontWeight: FontWeight.bold,
           ),
         ),
         subtitle: Text(
-          '${car.brand} ${car.model}',
-          style: const TextStyle(color: Colors.white70),
+          "${car.brand} ${car.model}",
+          style: const TextStyle(color: Colors.white54),
         ),
         trailing: const Icon(
-          Icons.chat_bubble_outline,
-          color: Colors.blueAccent,
+          Icons.arrow_forward_ios,
+          size: 16,
+          color: Colors.white24,
         ),
         onTap: () {
-          // Navigate to Chatbot and PASS the car object
+          // Navigate to Chatbot with this Car
           Navigator.of(context).pushNamed('/chatbot', arguments: car);
         },
       ),

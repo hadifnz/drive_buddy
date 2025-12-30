@@ -1,11 +1,10 @@
 // lib/screens/chatbot_screen.dart
 
-import 'package:drive_buddy/models/car_model.dart';
-import 'package:drive_buddy/models/trip_session_model.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:google_generative_ai/google_generative_ai.dart';
-import 'package:hive_flutter/hive_flutter.dart';
+import 'package:drive_buddy/models/car_model.dart';
 
 class ChatMessage {
   final String text;
@@ -25,10 +24,10 @@ class _ChatbotScreenState extends State<ChatbotScreen> {
   final _chatController = TextEditingController();
   final List<ChatMessage> _messages = [];
   bool _isBotTyping = false;
+  bool _isModelInitialized = false;
 
   late final GenerativeModel _model;
   late final ChatSession _chatSession;
-  bool _isModelInitialized = false;
 
   @override
   void initState() {
@@ -36,7 +35,7 @@ class _ChatbotScreenState extends State<ChatbotScreen> {
     _initializeGeminiWithContext();
   }
 
-  void _initializeGeminiWithContext() async {
+  Future<void> _initializeGeminiWithContext() async {
     final apiKey = dotenv.env['GEMINI_API_KEY'];
     if (apiKey == null) {
       _addSystemMessage("Error: No GEMINI_API_KEY found.");
@@ -44,26 +43,24 @@ class _ChatbotScreenState extends State<ChatbotScreen> {
     }
 
     try {
-      // 1. SAFELY FETCH HISTORY
-      // Check if box is open first to prevent crashes
-      if (!Hive.isBoxOpen('trip_sessions')) {
-        await Hive.openBox<TripSession>('trip_sessions');
-      }
-
-      final tripBox = Hive.box<TripSession>('trip_sessions');
-      final carTrips = tripBox.values
-          .where((t) => t.carKey == widget.car.key)
-          .toList();
+      // 1. FETCH TRIP HISTORY FROM FIRESTORE
+      // We need to know how the user drives to give good advice.
+      final tripQuery = await FirebaseFirestore.instance
+          .collection('trips')
+          .where('carId', isEqualTo: widget.car.id)
+          .get();
 
       int totalHarshBrakes = 0;
       int totalSharpTurns = 0;
-      for (var t in carTrips) {
-        totalHarshBrakes += t.harshBrakingCount;
-        totalSharpTurns += t.sharpTurnCount;
+
+      for (var doc in tripQuery.docs) {
+        final data = doc.data();
+        totalHarshBrakes += (data['harshBrakingCount'] ?? 0) as int;
+        totalSharpTurns += (data['sharpTurnCount'] ?? 0) as int;
       }
 
-      // 2. BUILD CONTEXT
-      // Using ?? 'N/A' prevents crashes on old car data
+      // 2. BUILD CONTEXT STRING
+      // This "Invisible Message" tells the AI who the car is.
       final String carContext =
           """
       VEHICLE CONTEXT:
@@ -74,22 +71,20 @@ class _ChatbotScreenState extends State<ChatbotScreen> {
       - Mileage: ${widget.car.currentMileage.toStringAsFixed(1)} km
       - Oil Type: ${widget.car.oilType ?? 'N/A'}
       
-      DRIVING HISTORY (Last ${carTrips.length} trips):
+      DRIVING HISTORY (Last ${tripQuery.docs.length} trips):
       - Total Harsh Braking Events: $totalHarshBrakes
       - Total Sharp Turns: $totalSharpTurns
       
       INSTRUCTIONS:
-      You are Drive Buddy. Use the vehicle context above.
-      If the transmission is CVT, DO NOT suggest checking 'ATF', suggest 'CVT Fluid'.
-      Only answer automotive questions.
+      You are Drive Buddy, an AI mechanic assistant.
+      Use the vehicle context above to answer questions.
+      If the transmission is CVT, DO NOT suggest checking 'ATF' or 'Gear Oil', suggest 'CVT Fluid'.
+      If they have many harsh brakes (>$totalHarshBrakes), suggest checking brake pads/rotors.
+      Only answer automotive questions. Keep answers concise.
       """;
 
-      // 3. INITIALIZE GEMINI (USING THE MODEL FROM YOUR LOGS)
-      _model = GenerativeModel(
-        // --- CHANGED MODEL HERE ---
-        model: 'gemini-2.0-flash',
-        apiKey: apiKey,
-      );
+      // 3. INITIALIZE GEMINI
+      _model = GenerativeModel(model: 'gemini-2.0-flash', apiKey: apiKey);
 
       _chatSession = _model.startChat(
         history: [
@@ -101,7 +96,7 @@ class _ChatbotScreenState extends State<ChatbotScreen> {
       if (mounted) {
         setState(() {
           _isModelInitialized = true;
-          // Insert at index 0 so it appears at the bottom (because of reverse: true)
+          // Add greeting to the bottom (because list is reversed)
           _messages.insert(
             0,
             ChatMessage(
@@ -114,7 +109,7 @@ class _ChatbotScreenState extends State<ChatbotScreen> {
       }
     } catch (e) {
       print("Gemini Init Error: $e");
-      _addSystemMessage("Connection failed: $e");
+      _addSystemMessage("Connection failed. Check internet.");
     }
   }
 
@@ -133,7 +128,7 @@ class _ChatbotScreenState extends State<ChatbotScreen> {
 
   void _sendMessage() async {
     if (!_isModelInitialized) {
-      _addSystemMessage("Chatbot not ready. Check internet or restart.");
+      _addSystemMessage("Chatbot connecting... please wait.");
       return;
     }
 
@@ -149,7 +144,7 @@ class _ChatbotScreenState extends State<ChatbotScreen> {
     _chatController.clear();
 
     try {
-      // 2. Send to API
+      // 2. Send to Google API
       final response = await _chatSession.sendMessage(Content.text(text));
       final botText = response.text;
 
@@ -159,7 +154,6 @@ class _ChatbotScreenState extends State<ChatbotScreen> {
         });
       }
     } catch (e) {
-      print("Send Error: $e");
       _addSystemMessage("Error sending message. Try again.");
     } finally {
       if (mounted) {
@@ -186,7 +180,7 @@ class _ChatbotScreenState extends State<ChatbotScreen> {
         children: [
           Expanded(
             child: ListView.builder(
-              reverse: true, // Fills from bottom up
+              reverse: true, // Fills from bottom up (Standard Chat UI)
               padding: const EdgeInsets.all(16.0),
               itemCount: _messages.length,
               itemBuilder: (context, index) {
@@ -198,8 +192,8 @@ class _ChatbotScreenState extends State<ChatbotScreen> {
             const Padding(
               padding: EdgeInsets.all(8.0),
               child: Text(
-                'Analyzing...',
-                style: TextStyle(color: Colors.white70),
+                'Drive Buddy is typing...',
+                style: TextStyle(color: Colors.white70, fontSize: 12),
               ),
             ),
           _buildTextInput(),
@@ -219,7 +213,7 @@ class _ChatbotScreenState extends State<ChatbotScreen> {
               controller: _chatController,
               style: const TextStyle(color: Colors.white),
               decoration: InputDecoration(
-                hintText: 'Ask about a problem...',
+                hintText: 'Ask about maintenance...',
                 hintStyle: TextStyle(color: Colors.white.withOpacity(0.5)),
                 filled: true,
                 fillColor: Colors.grey.shade800,

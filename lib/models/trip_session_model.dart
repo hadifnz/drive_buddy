@@ -1,36 +1,21 @@
-import 'package:hive/hive.dart';
+// lib/models/trip_session_model.dart
 
-part 'trip_session_model.g.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 
-@HiveType(typeId: 1)
-class TripSession extends HiveObject {
-  @HiveField(0)
-  late int carKey;
-
-  @HiveField(1)
-  late DateTime endTimestamp;
-
-  @HiveField(2)
-  late int durationInSeconds;
-
-  @HiveField(3)
-  late double distanceInMeters;
-
-  @HiveField(4)
-  late int harshBrakingCount;
-
-  @HiveField(5)
-  late int rapidAccelCount;
-
-  @HiveField(6)
-  late int sharpTurnCount;
-
-  // --- NEW FIELD: STORE THE ROUTE ---
-  @HiveField(7)
-  List<String>? routePath; // Stored as "lat,lng" strings
+class TripSession {
+  final String id; // Firestore Document ID
+  final String carId; // Links to the Car
+  final DateTime endTimestamp;
+  final int durationInSeconds;
+  final double distanceInMeters;
+  final int harshBrakingCount;
+  final int rapidAccelCount;
+  final int sharpTurnCount;
+  final List<String>? routePath; // GPS Coordinates "lat,lng"
 
   TripSession({
-    required this.carKey,
+    required this.id,
+    required this.carId,
     required this.endTimestamp,
     required this.durationInSeconds,
     required this.distanceInMeters,
@@ -39,4 +24,37 @@ class TripSession extends HiveObject {
     required this.sharpTurnCount,
     this.routePath,
   });
+
+  // Factory: Create Trip from Firestore Data
+  factory TripSession.fromMap(Map<String, dynamic> data, String documentId) {
+    return TripSession(
+      id: documentId,
+      carId: data['carId'] ?? '',
+      // Handle timestamp conversion from Firestore
+      endTimestamp: (data['endTimestamp'] as Timestamp).toDate(),
+      durationInSeconds: data['durationInSeconds'] ?? 0,
+      distanceInMeters: (data['distanceInMeters'] ?? 0).toDouble(),
+      harshBrakingCount: data['harshBrakingCount'] ?? 0,
+      rapidAccelCount: data['rapidAccelCount'] ?? 0,
+      sharpTurnCount: data['sharpTurnCount'] ?? 0,
+      // Convert dynamic list to String list safely
+      routePath: data['routePath'] != null
+          ? List<String>.from(data['routePath'])
+          : [],
+    );
+  }
+
+  // Method: Convert Trip to Map for Uploading
+  Map<String, dynamic> toMap() {
+    return {
+      'carId': carId,
+      'endTimestamp': Timestamp.fromDate(endTimestamp),
+      'durationInSeconds': durationInSeconds,
+      'distanceInMeters': distanceInMeters,
+      'harshBrakingCount': harshBrakingCount,
+      'rapidAccelCount': rapidAccelCount,
+      'sharpTurnCount': sharpTurnCount,
+      'routePath': routePath,
+    };
+  }
 }

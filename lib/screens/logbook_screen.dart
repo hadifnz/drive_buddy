@@ -1,18 +1,19 @@
 // lib/screens/logbook_screen.dart
 
-import 'package:drive_buddy/models/car_model.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
-import 'package:hive_flutter/hive_flutter.dart';
-import 'package:drive_buddy/models/trip_session_model.dart';
-import 'package:drive_buddy/screens/session_detail_screen.dart'; // Import for Map Screen
 import 'package:intl/intl.dart';
+
+import 'package:drive_buddy/models/car_model.dart';
+import 'package:drive_buddy/models/trip_session_model.dart';
+import 'package:drive_buddy/screens/session_detail_screen.dart'; // Ensure this file exists
 
 class LogbookScreen extends StatelessWidget {
   final Car car;
 
   const LogbookScreen({super.key, required this.car});
 
-  // --- DELETE LOGIC WITH ROLLBACK ---
+  // --- DELETE LOGIC (Cloud Transaction) ---
   Future<void> _deleteTrip(BuildContext context, TripSession trip) async {
     final shouldDelete = await showDialog<bool>(
       context: context,
@@ -23,7 +24,7 @@ class LogbookScreen extends StatelessWidget {
           style: TextStyle(color: Colors.white),
         ),
         content: const Text(
-          "This will remove the trip record and rollback your odometer and oil life. This cannot be undone.",
+          "This will remove the trip from the cloud and rollback your odometer and oil life.",
           style: TextStyle(color: Colors.white70),
         ),
         actions: [
@@ -41,26 +42,57 @@ class LogbookScreen extends StatelessWidget {
 
     if (shouldDelete != true) return;
 
-    // 1. Rollback Car Stats
-    final carBox = Hive.box<Car>('cars');
-    final liveCar = carBox.get(trip.carKey);
+    try {
+      // We use a TRANSACTION to ensure both the delete and the rollback happen together.
+      // If one fails, they both fail.
+      await FirebaseFirestore.instance.runTransaction((transaction) async {
+        final carRef = FirebaseFirestore.instance
+            .collection('cars')
+            .doc(car.id);
+        final tripRef = FirebaseFirestore.instance
+            .collection('trips')
+            .doc(trip.id);
 
-    if (liveCar != null) {
-      double tripKm = trip.distanceInMeters / 1000.0;
+        // 1. Get current car data
+        final carSnapshot = await transaction.get(carRef);
+        if (!carSnapshot.exists) return;
 
-      // Subtract mileage (it never happened)
-      liveCar.currentMileage -= tripKm;
-      // Add back oil life (we are undoing the wear)
-      liveCar.oilLifeRemaining += tripKm;
+        // 2. Calculate Rollback Values
+        double tripKm = trip.distanceInMeters / 1000.0;
 
-      // Safety clamps
-      if (liveCar.currentMileage < 0) liveCar.currentMileage = 0;
+        // Re-calculate stress factor to know how much oil life to give back
+        double stressFactor = 0.0;
+        if (trip.durationInSeconds < 600) stressFactor += 1.0;
+        if ((trip.harshBrakingCount +
+                trip.rapidAccelCount +
+                trip.sharpTurnCount) >
+            5)
+          stressFactor += 0.5;
+        double effectiveKm = tripKm * (1 + stressFactor);
 
-      liveCar.save(); // Persist changes
+        // 3. Perform Updates
+        // Note: FieldValue.increment is simpler, but inside a transaction we can do manual math safely
+        transaction.update(carRef, {
+          'currentMileage': FieldValue.increment(-tripKm),
+          'oilLifeRemaining': FieldValue.increment(effectiveKm),
+        });
+
+        // 4. Delete the Trip
+        transaction.delete(tripRef);
+      });
+
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Trip deleted & stats rolled back.")),
+        );
+      }
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text("Error: $e")));
+      }
     }
-
-    // 2. Delete Trip
-    await trip.delete();
   }
 
   @override
@@ -84,39 +116,18 @@ class LogbookScreen extends StatelessWidget {
         padding: const EdgeInsets.all(24.0),
         child: Column(
           children: [
-            // 1. Plate Number Header
-            Container(
-              padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 40),
-              decoration: BoxDecoration(
-                color: Colors.grey.shade800,
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: Colors.white12),
-              ),
-              child: Text(
-                car.plateNumber,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 22,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-            ),
-            const SizedBox(height: 30),
+            // 1. LIVE CAR HEADER (StreamBuilder)
+            StreamBuilder<DocumentSnapshot>(
+              stream: FirebaseFirestore.instance
+                  .collection('cars')
+                  .doc(car.id)
+                  .snapshots(),
+              builder: (context, snapshot) {
+                if (!snapshot.hasData) return const CircularProgressIndicator();
 
-            // 2. Live Car Details
-            ValueListenableBuilder(
-              valueListenable: Hive.box<Car>(
-                'cars',
-              ).listenable(keys: [car.key]),
-              builder: (context, Box<Car> box, _) {
-                final liveCar = box.get(car.key);
-
-                if (liveCar == null) {
-                  return const Text(
-                    "Car data unavailable",
-                    style: TextStyle(color: Colors.white),
-                  );
-                }
+                // Convert Cloud Data to Car Object
+                final carData = snapshot.data!.data() as Map<String, dynamic>;
+                final liveCar = Car.fromMap(carData, car.id);
 
                 // Determine Health Color
                 Color oilColor = Colors.green;
@@ -125,7 +136,29 @@ class LogbookScreen extends StatelessWidget {
 
                 return Column(
                   children: [
-                    // --- OIL LIFE CARD ---
+                    // Plate Number Badge
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        vertical: 12,
+                        horizontal: 40,
+                      ),
+                      margin: const EdgeInsets.only(bottom: 30),
+                      decoration: BoxDecoration(
+                        color: Colors.grey.shade800,
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: Colors.white12),
+                      ),
+                      child: Text(
+                        liveCar.plateNumber,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 22,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+
+                    // Oil Health Card
                     Container(
                       padding: const EdgeInsets.all(16),
                       margin: const EdgeInsets.only(bottom: 20),
@@ -154,7 +187,6 @@ class LogbookScreen extends StatelessWidget {
                           ),
                           const SizedBox(height: 10),
                           LinearProgressIndicator(
-                            // Normalize assuming 10k max for visualization
                             value: (liveCar.oilLifeRemaining / 10000).clamp(
                               0.0,
                               1.0,
@@ -177,7 +209,7 @@ class LogbookScreen extends StatelessWidget {
                       ),
                     ),
 
-                    // --- SPECS GRID ---
+                    // Specs Grid
                     _buildDetailRow('Model', liveCar.model),
                     _buildDetailRow('Make', liveCar.brand),
                     _buildDetailRow(
@@ -199,57 +231,7 @@ class LogbookScreen extends StatelessWidget {
 
             const SizedBox(height: 40),
 
-            // 3. Dynamic Warnings (Only show if issues detected)
-            ValueListenableBuilder(
-              valueListenable: Hive.box<TripSession>(
-                'trip_sessions',
-              ).listenable(),
-              builder: (context, Box<TripSession> box, _) {
-                final trips = box.values
-                    .where((t) => t.carKey == car.key)
-                    .toList();
-
-                int harshBrakes = 0;
-                int sharpTurns = 0;
-                for (var t in trips) {
-                  harshBrakes += t.harshBrakingCount;
-                  sharpTurns += t.sharpTurnCount;
-                }
-
-                if (harshBrakes == 0 && sharpTurns == 0)
-                  return const SizedBox.shrink();
-
-                return Column(
-                  children: [
-                    const Align(
-                      alignment: Alignment.centerLeft,
-                      child: Text(
-                        'Risk Assessment',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 24,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                    if (harshBrakes > 0)
-                      _buildReminderCard(
-                        'High Brake Wear Detected ($harshBrakes events)',
-                        Colors.yellow.shade700,
-                      ),
-                    if (sharpTurns > 0)
-                      _buildReminderCard(
-                        'Suspension Stress Detected ($sharpTurns events)',
-                        Colors.red.shade700,
-                      ),
-                    const SizedBox(height: 40),
-                  ],
-                );
-              },
-            ),
-
-            // 4. Trip History List
+            // 2. TRIP HISTORY (StreamBuilder)
             const Align(
               alignment: Alignment.centerLeft,
               child: Text(
@@ -262,12 +244,53 @@ class LogbookScreen extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 10),
-            _buildTripHistoryList(context),
+
+            StreamBuilder<QuerySnapshot>(
+              stream: FirebaseFirestore.instance
+                  .collection('trips')
+                  .where('carId', isEqualTo: car.id)
+                  .orderBy(
+                    'endTimestamp',
+                    descending: true,
+                  ) // Show newest first
+                  .snapshots(),
+              builder: (context, snapshot) {
+                if (snapshot.connectionState == ConnectionState.waiting) {
+                  return const Padding(
+                    padding: EdgeInsets.all(20),
+                    child: CircularProgressIndicator(),
+                  );
+                }
+
+                final docs = snapshot.data?.docs ?? [];
+
+                if (docs.isEmpty) {
+                  return const Padding(
+                    padding: EdgeInsets.all(24.0),
+                    child: Text(
+                      'No trips recorded yet.',
+                      style: TextStyle(color: Colors.white38, fontSize: 16),
+                    ),
+                  );
+                }
+
+                return ListView.builder(
+                  itemCount: docs.length,
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  itemBuilder: (context, index) {
+                    final data = docs[index].data() as Map<String, dynamic>;
+                    final trip = TripSession.fromMap(data, docs[index].id);
+                    return _buildTripCard(context, trip);
+                  },
+                );
+              },
+            ),
           ],
         ),
       ),
 
-      // 5. Start Driving Button
+      // Start Driving Button
       bottomNavigationBar: BottomAppBar(
         color: Colors.black,
         height: 100,
@@ -320,70 +343,12 @@ class LogbookScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildReminderCard(String text, Color color) {
-    return Container(
-      width: double.infinity,
-      margin: const EdgeInsets.symmetric(vertical: 6),
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: color.withOpacity(0.2), // Transparent background
-        border: Border.all(color: color),
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Row(
-        children: [
-          Icon(Icons.warning_amber_rounded, color: color),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Text(
-              text,
-              style: TextStyle(color: color, fontWeight: FontWeight.bold),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildTripHistoryList(BuildContext context) {
-    return ValueListenableBuilder(
-      valueListenable: Hive.box<TripSession>('trip_sessions').listenable(),
-      builder: (context, Box<TripSession> box, _) {
-        final trips = box.values
-            .where((trip) => trip.carKey == car.key)
-            .toList();
-
-        // Sort: Newest first
-        trips.sort((a, b) => b.endTimestamp.compareTo(a.endTimestamp));
-
-        if (trips.isEmpty) {
-          return const Padding(
-            padding: EdgeInsets.all(24.0),
-            child: Text(
-              'No trips recorded yet.',
-              style: TextStyle(color: Colors.white38, fontSize: 16),
-            ),
-          );
-        }
-
-        return ListView.builder(
-          itemCount: trips.length,
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          itemBuilder: (context, index) {
-            return _buildTripCard(context, trips[index]);
-          },
-        );
-      },
-    );
-  }
-
   Widget _buildTripCard(BuildContext context, TripSession trip) {
     final date = DateFormat('MMM d, yyyy').format(trip.endTimestamp);
     final time = DateFormat('h:mm a').format(trip.endTimestamp);
     final distanceKm = (trip.distanceInMeters / 1000).toStringAsFixed(1);
 
-    // Total 'Bad' Events
+    // Alert logic
     final totalEvents =
         trip.harshBrakingCount + trip.rapidAccelCount + trip.sharpTurnCount;
     Color statusColor = Colors.green;
@@ -392,7 +357,6 @@ class LogbookScreen extends StatelessWidget {
 
     return GestureDetector(
       onTap: () {
-        // Navigate to the Map Analysis Screen
         Navigator.of(context).push(
           MaterialPageRoute(builder: (_) => SessionDetailScreen(trip: trip)),
         );
@@ -403,9 +367,7 @@ class LogbookScreen extends StatelessWidget {
         decoration: BoxDecoration(
           color: Colors.grey.shade900,
           borderRadius: BorderRadius.circular(12),
-          border: Border(
-            left: BorderSide(color: statusColor, width: 4),
-          ), // Status Indicator
+          border: Border(left: BorderSide(color: statusColor, width: 4)),
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -421,7 +383,6 @@ class LogbookScreen extends StatelessWidget {
                     fontWeight: FontWeight.bold,
                   ),
                 ),
-                // Delete Button
                 IconButton(
                   icon: const Icon(
                     Icons.delete_outline,
@@ -430,8 +391,7 @@ class LogbookScreen extends StatelessWidget {
                   ),
                   onPressed: () => _deleteTrip(context, trip),
                   padding: EdgeInsets.zero,
-                  constraints:
-                      const BoxConstraints(), // Removes default padding
+                  constraints: const BoxConstraints(),
                 ),
               ],
             ),

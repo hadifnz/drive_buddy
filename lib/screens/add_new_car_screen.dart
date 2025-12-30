@@ -1,7 +1,10 @@
+// lib/screens/add_new_car_screen.dart
+
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
-import 'package:hive/hive.dart';
-import 'package:drive_buddy/models/car_model.dart';
-import 'package:intl/intl.dart'; // For Date Formatting
+import 'package:intl/intl.dart';
+import 'package:drive_buddy/models/car_model.dart'; // We use the new model logic
 
 class AddNewCarScreen extends StatefulWidget {
   const AddNewCarScreen({super.key});
@@ -20,7 +23,6 @@ class _AddNewCarScreenState extends State<AddNewCarScreen> {
   final _lastServiceController = TextEditingController();
   final _capacityController = TextEditingController();
 
-  // Dropdown Selections
   String? _selectedOilType;
   final List<String> _oilTypes = [
     'Mineral (5,000 km)',
@@ -30,6 +32,8 @@ class _AddNewCarScreenState extends State<AddNewCarScreen> {
 
   String? _selectedTransmission;
   final List<String> _transmissionTypes = ['Auto (AT)', 'Manual (MT)', 'CVT'];
+
+  bool _isSaving = false;
 
   @override
   void dispose() {
@@ -44,7 +48,6 @@ class _AddNewCarScreenState extends State<AddNewCarScreen> {
     super.dispose();
   }
 
-  // Date Picker Logic
   Future<void> _selectDate(BuildContext context) async {
     final DateTime? picked = await showDatePicker(
       context: context,
@@ -59,15 +62,11 @@ class _AddNewCarScreenState extends State<AddNewCarScreen> {
               onPrimary: Colors.black,
               onSurface: Colors.white,
             ),
-            textButtonTheme: TextButtonThemeData(
-              style: TextButton.styleFrom(foregroundColor: Colors.white),
-            ),
           ),
           child: child!,
         );
       },
     );
-
     if (picked != null) {
       setState(() {
         _lastServiceController.text = DateFormat('yyyy-MM-dd').format(picked);
@@ -75,7 +74,12 @@ class _AddNewCarScreenState extends State<AddNewCarScreen> {
     }
   }
 
-  void _saveCar() {
+  Future<void> _saveCar() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return; // Should not happen
+
+    setState(() => _isSaving = true);
+
     // 1. Determine Oil Life
     double initialOilLife = 10000.0;
     if (_selectedOilType != null) {
@@ -84,8 +88,12 @@ class _AddNewCarScreenState extends State<AddNewCarScreen> {
       if (_selectedOilType!.contains('Fully')) initialOilLife = 10000.0;
     }
 
-    // 2. Create Car
+    // 2. Prepare Data Map (Using the new Model logic)
+    // Note: We generate a blank ID first, Firestore will assign a real one,
+    // or we can let Firestore generate it on .add()
     final newCar = Car(
+      id: '', // Temporary, Firestore handles this
+      ownerId: user.uid, // LINK TO USER
       plateNumber: _plateController.text,
       model: _modelController.text,
       brand: _makeController.text,
@@ -99,10 +107,20 @@ class _AddNewCarScreenState extends State<AddNewCarScreen> {
       transmissionType: _selectedTransmission,
     );
 
-    final box = Hive.box<Car>('cars');
-    box.add(newCar);
+    try {
+      // 3. Upload to Firestore
+      await FirebaseFirestore.instance.collection('cars').add(newCar.toMap());
 
-    Navigator.of(context).pop();
+      if (mounted) {
+        Navigator.of(context).pop(); // Close screen on success
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text("Error adding car: $e")));
+    } finally {
+      if (mounted) setState(() => _isSaving = false);
+    }
   }
 
   @override
@@ -111,7 +129,7 @@ class _AddNewCarScreenState extends State<AddNewCarScreen> {
       backgroundColor: Colors.black,
       appBar: AppBar(
         title: const Text(
-          'ADD NEW CAR',
+          'ADD NEW CAR (CLOUD)',
           style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
         ),
         backgroundColor: Colors.black,
@@ -124,23 +142,18 @@ class _AddNewCarScreenState extends State<AddNewCarScreen> {
             _buildTextField(controller: _plateController, label: 'Plate No.'),
             _buildTextField(controller: _modelController, label: 'Model'),
             _buildTextField(controller: _makeController, label: 'Make'),
-
-            // Odometer (Number Pad)
             _buildTextField(
               controller: _odometerController,
               label: 'Odometer',
               keyboardType: TextInputType.number,
             ),
 
-            // Oil Type Dropdown
             _buildDropdown(
               label: 'Oil Type',
               value: _selectedOilType,
               items: _oilTypes,
               onChanged: (val) => setState(() => _selectedOilType = val),
             ),
-
-            // Capacity (Decimal Pad)
             _buildTextField(
               controller: _capacityController,
               label: 'Capacity (L)',
@@ -148,8 +161,6 @@ class _AddNewCarScreenState extends State<AddNewCarScreen> {
                 decimal: true,
               ),
             ),
-
-            // Transmission Dropdown
             _buildDropdown(
               label: 'Trans.',
               value: _selectedTransmission,
@@ -166,7 +177,6 @@ class _AddNewCarScreenState extends State<AddNewCarScreen> {
               label: 'Engine Code',
             ),
 
-            // Last Service (Date Picker)
             _buildDatePickerField(
               controller: _lastServiceController,
               label: 'Last Service',
@@ -174,32 +184,36 @@ class _AddNewCarScreenState extends State<AddNewCarScreen> {
             ),
 
             const SizedBox(height: 40),
-            Row(
-              children: [
-                Expanded(
-                  child: _buildButton(
-                    text: 'Cancel',
-                    isPrimary: false,
-                    onPressed: () => Navigator.of(context).pop(),
+
+            if (_isSaving)
+              const CircularProgressIndicator()
+            else
+              Row(
+                children: [
+                  Expanded(
+                    child: _buildButton(
+                      text: 'Cancel',
+                      isPrimary: false,
+                      onPressed: () => Navigator.of(context).pop(),
+                    ),
                   ),
-                ),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: _buildButton(
-                    text: 'Confirm',
-                    isPrimary: true,
-                    onPressed: _saveCar,
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: _buildButton(
+                      text: 'Save to Cloud',
+                      isPrimary: true,
+                      onPressed: _saveCar,
+                    ),
                   ),
-                ),
-              ],
-            ),
+                ],
+              ),
           ],
         ),
       ),
     );
   }
 
-  // --- Widgets ---
+  // --- Helper Widgets (Same as before) ---
   Widget _buildTextField({
     required TextEditingController controller,
     required String label,
@@ -321,7 +335,7 @@ class _AddNewCarScreenState extends State<AddNewCarScreen> {
                   style: const TextStyle(color: Colors.white, fontSize: 16),
                   onChanged: onChanged,
                   items: items
-                      .map<DropdownMenuItem<String>>(
+                      .map(
                         (val) => DropdownMenuItem(value: val, child: Text(val)),
                       )
                       .toList(),
