@@ -24,6 +24,8 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  
+  fl_chart: ^0.66.0
 
   geolocator: ^11.0.0            # For GPS functionality
   sensors_plus: ^5.0.1           # For accelerometer and gyroscope access

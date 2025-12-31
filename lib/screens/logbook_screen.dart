@@ -6,7 +6,8 @@ import 'package:intl/intl.dart';
 
 import 'package:drive_buddy/models/car_model.dart';
 import 'package:drive_buddy/models/trip_session_model.dart';
-import 'package:drive_buddy/screens/session_detail_screen.dart'; // Ensure this file exists
+import 'package:drive_buddy/screens/session_detail_screen.dart';
+import 'package:drive_buddy/screens/analysis_screen.dart'; // Import the new Analysis Screen
 
 class LogbookScreen extends StatelessWidget {
   final Car car;
@@ -19,23 +20,14 @@ class LogbookScreen extends StatelessWidget {
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: Colors.grey.shade900,
-        title: const Text(
-          "Delete Trip?",
-          style: TextStyle(color: Colors.white),
-        ),
+        title: const Text("Delete Trip?", style: TextStyle(color: Colors.white)),
         content: const Text(
           "This will remove the trip from the cloud and rollback your odometer and oil life.",
           style: TextStyle(color: Colors.white70),
         ),
         actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(false),
-            child: const Text("Cancel"),
-          ),
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(true),
-            child: const Text("Delete", style: TextStyle(color: Colors.red)),
-          ),
+          TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text("Cancel")),
+          TextButton(onPressed: () => Navigator.of(ctx).pop(true), child: const Text("Delete", style: TextStyle(color: Colors.red))),
         ],
       ),
     );
@@ -44,14 +36,9 @@ class LogbookScreen extends StatelessWidget {
 
     try {
       // We use a TRANSACTION to ensure both the delete and the rollback happen together.
-      // If one fails, they both fail.
       await FirebaseFirestore.instance.runTransaction((transaction) async {
-        final carRef = FirebaseFirestore.instance
-            .collection('cars')
-            .doc(car.id);
-        final tripRef = FirebaseFirestore.instance
-            .collection('trips')
-            .doc(trip.id);
+        final carRef = FirebaseFirestore.instance.collection('cars').doc(car.id);
+        final tripRef = FirebaseFirestore.instance.collection('trips').doc(trip.id);
 
         // 1. Get current car data
         final carSnapshot = await transaction.get(carRef);
@@ -63,15 +50,10 @@ class LogbookScreen extends StatelessWidget {
         // Re-calculate stress factor to know how much oil life to give back
         double stressFactor = 0.0;
         if (trip.durationInSeconds < 600) stressFactor += 1.0;
-        if ((trip.harshBrakingCount +
-                trip.rapidAccelCount +
-                trip.sharpTurnCount) >
-            5)
-          stressFactor += 0.5;
+        if ((trip.harshBrakingCount + trip.rapidAccelCount + trip.sharpTurnCount) > 5) stressFactor += 0.5;
         double effectiveKm = tripKm * (1 + stressFactor);
 
         // 3. Perform Updates
-        // Note: FieldValue.increment is simpler, but inside a transaction we can do manual math safely
         transaction.update(carRef, {
           'currentMileage': FieldValue.increment(-tripKm),
           'oilLifeRemaining': FieldValue.increment(effectiveKm),
@@ -82,15 +64,11 @@ class LogbookScreen extends StatelessWidget {
       });
 
       if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Trip deleted & stats rolled back.")),
-        );
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Trip deleted & stats rolled back.")));
       }
     } catch (e) {
       if (context.mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text("Error: $e")));
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e")));
       }
     }
   }
@@ -100,17 +78,24 @@ class LogbookScreen extends StatelessWidget {
     return Scaffold(
       backgroundColor: Colors.black,
       appBar: AppBar(
-        title: const Text(
-          'LOG BOOK',
-          style: TextStyle(
-            fontWeight: FontWeight.bold,
-            letterSpacing: 1.5,
-            color: Colors.white,
-          ),
-        ),
+        title: const Text('LOG BOOK', style: TextStyle(fontWeight: FontWeight.bold, letterSpacing: 1.5, color: Colors.white)),
         backgroundColor: Colors.black,
         iconTheme: const IconThemeData(color: Colors.white),
         centerTitle: true,
+        actions: [
+          // --- NEW ANALYSIS BUTTON ---
+          IconButton(
+            icon: const Icon(Icons.bar_chart, color: Colors.blueAccent),
+            tooltip: 'Driving Analysis',
+            onPressed: () {
+              Navigator.push(
+                context, 
+                MaterialPageRoute(builder: (_) => AnalysisScreen(car: car)),
+              );
+            },
+          ),
+          const SizedBox(width: 8),
+        ],
       ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(24.0),
@@ -118,10 +103,7 @@ class LogbookScreen extends StatelessWidget {
           children: [
             // 1. LIVE CAR HEADER (StreamBuilder)
             StreamBuilder<DocumentSnapshot>(
-              stream: FirebaseFirestore.instance
-                  .collection('cars')
-                  .doc(car.id)
-                  .snapshots(),
+              stream: FirebaseFirestore.instance.collection('cars').doc(car.id).snapshots(),
               builder: (context, snapshot) {
                 if (!snapshot.hasData) return const CircularProgressIndicator();
 
@@ -138,24 +120,14 @@ class LogbookScreen extends StatelessWidget {
                   children: [
                     // Plate Number Badge
                     Container(
-                      padding: const EdgeInsets.symmetric(
-                        vertical: 12,
-                        horizontal: 40,
-                      ),
+                      padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 40),
                       margin: const EdgeInsets.only(bottom: 30),
                       decoration: BoxDecoration(
                         color: Colors.grey.shade800,
                         borderRadius: BorderRadius.circular(12),
                         border: Border.all(color: Colors.white12),
                       ),
-                      child: Text(
-                        liveCar.plateNumber,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 22,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
+                      child: Text(liveCar.plateNumber, style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold)),
                     ),
 
                     // Oil Health Card
@@ -172,25 +144,13 @@ class LogbookScreen extends StatelessWidget {
                           Row(
                             mainAxisAlignment: MainAxisAlignment.spaceBetween,
                             children: [
-                              const Text(
-                                "Oil Health",
-                                style: TextStyle(color: Colors.white70),
-                              ),
-                              Text(
-                                "${liveCar.oilType ?? 'Standard'} Oil",
-                                style: const TextStyle(
-                                  color: Colors.white38,
-                                  fontSize: 12,
-                                ),
-                              ),
+                              const Text("Oil Health", style: TextStyle(color: Colors.white70)),
+                              Text("${liveCar.oilType ?? 'Standard'} Oil", style: const TextStyle(color: Colors.white38, fontSize: 12)),
                             ],
                           ),
                           const SizedBox(height: 10),
                           LinearProgressIndicator(
-                            value: (liveCar.oilLifeRemaining / 10000).clamp(
-                              0.0,
-                              1.0,
-                            ),
+                            value: (liveCar.oilLifeRemaining / 10000).clamp(0.0, 1.0),
                             backgroundColor: Colors.grey.shade800,
                             color: oilColor,
                             minHeight: 8,
@@ -199,11 +159,7 @@ class LogbookScreen extends StatelessWidget {
                           const SizedBox(height: 8),
                           Text(
                             "${liveCar.oilLifeRemaining.toStringAsFixed(0)} km remaining",
-                            style: TextStyle(
-                              color: oilColor,
-                              fontWeight: FontWeight.bold,
-                              fontSize: 16,
-                            ),
+                            style: TextStyle(color: oilColor, fontWeight: FontWeight.bold, fontSize: 16),
                           ),
                         ],
                       ),
@@ -212,18 +168,9 @@ class LogbookScreen extends StatelessWidget {
                     // Specs Grid
                     _buildDetailRow('Model', liveCar.model),
                     _buildDetailRow('Make', liveCar.brand),
-                    _buildDetailRow(
-                      'Capacity',
-                      liveCar.engineCapacity ?? 'N/A',
-                    ),
-                    _buildDetailRow(
-                      'Trans.',
-                      liveCar.transmissionType ?? 'N/A',
-                    ),
-                    _buildDetailRow(
-                      'Odometer',
-                      '${liveCar.currentMileage.toStringAsFixed(1)} km',
-                    ),
+                    _buildDetailRow('Capacity', liveCar.engineCapacity ?? 'N/A'),
+                    _buildDetailRow('Trans.', liveCar.transmissionType ?? 'N/A'),
+                    _buildDetailRow('Odometer', '${liveCar.currentMileage.toStringAsFixed(1)} km'),
                   ],
                 );
               },
@@ -234,43 +181,46 @@ class LogbookScreen extends StatelessWidget {
             // 2. TRIP HISTORY (StreamBuilder)
             const Align(
               alignment: Alignment.centerLeft,
-              child: Text(
-                'Trip History',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 24,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
+              child: Text('Trip History', style: TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold)),
             ),
             const SizedBox(height: 10),
-
+            
             StreamBuilder<QuerySnapshot>(
               stream: FirebaseFirestore.instance
                   .collection('trips')
                   .where('carId', isEqualTo: car.id)
-                  .orderBy(
-                    'endTimestamp',
-                    descending: true,
-                  ) // Show newest first
+                  .orderBy('endTimestamp', descending: true) 
                   .snapshots(),
               builder: (context, snapshot) {
-                if (snapshot.connectionState == ConnectionState.waiting) {
-                  return const Padding(
-                    padding: EdgeInsets.all(20),
-                    child: CircularProgressIndicator(),
+                // ERROR HANDLING FOR MISSING INDEX
+                if (snapshot.hasError) {
+                  print("FIREBASE ERROR: ${snapshot.error}"); 
+                  return Container(
+                    padding: const EdgeInsets.all(16),
+                    color: Colors.red.shade900,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text("Error loading trips!", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                        const SizedBox(height: 4),
+                        Text("${snapshot.error}", style: const TextStyle(color: Colors.white70, fontSize: 12)),
+                        const SizedBox(height: 8),
+                        const Text("Check Debug Console for the index creation link.", style: TextStyle(color: Colors.yellow, fontSize: 12)),
+                      ],
+                    ),
                   );
                 }
 
+                if (snapshot.connectionState == ConnectionState.waiting) {
+                  return const Padding(padding: EdgeInsets.all(20), child: CircularProgressIndicator());
+                }
+                
                 final docs = snapshot.data?.docs ?? [];
-
+                
                 if (docs.isEmpty) {
                   return const Padding(
                     padding: EdgeInsets.all(24.0),
-                    child: Text(
-                      'No trips recorded yet.',
-                      style: TextStyle(color: Colors.white38, fontSize: 16),
-                    ),
+                    child: Text('No trips recorded yet.', style: TextStyle(color: Colors.white38, fontSize: 16)),
                   );
                 }
 
@@ -289,20 +239,17 @@ class LogbookScreen extends StatelessWidget {
           ],
         ),
       ),
-
+      
       // Start Driving Button
       bottomNavigationBar: BottomAppBar(
         color: Colors.black,
         height: 100,
         child: Center(
           child: SizedBox(
-            width: 70,
-            height: 70,
+            width: 70, height: 70,
             child: FloatingActionButton(
               onPressed: () {
-                Navigator.of(
-                  context,
-                ).pushNamed('/driving_session', arguments: car);
+                Navigator.of(context).pushNamed('/driving_session', arguments: car);
               },
               backgroundColor: Colors.grey.shade800,
               shape: const CircleBorder(),
@@ -321,23 +268,8 @@ class LogbookScreen extends StatelessWidget {
       padding: const EdgeInsets.symmetric(vertical: 6.0),
       child: Row(
         children: [
-          SizedBox(
-            width: 100,
-            child: Text(
-              '$label :',
-              style: const TextStyle(color: Colors.white54, fontSize: 16),
-            ),
-          ),
-          Expanded(
-            child: Text(
-              value,
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 16,
-                fontWeight: FontWeight.w500,
-              ),
-            ),
-          ),
+          SizedBox(width: 100, child: Text('$label :', style: const TextStyle(color: Colors.white54, fontSize: 16))),
+          Expanded(child: Text(value, style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w500))),
         ],
       ),
     );
@@ -347,10 +279,9 @@ class LogbookScreen extends StatelessWidget {
     final date = DateFormat('MMM d, yyyy').format(trip.endTimestamp);
     final time = DateFormat('h:mm a').format(trip.endTimestamp);
     final distanceKm = (trip.distanceInMeters / 1000).toStringAsFixed(1);
-
+    
     // Alert logic
-    final totalEvents =
-        trip.harshBrakingCount + trip.rapidAccelCount + trip.sharpTurnCount;
+    final totalEvents = trip.harshBrakingCount + trip.rapidAccelCount + trip.sharpTurnCount;
     Color statusColor = Colors.green;
     if (totalEvents > 2) statusColor = Colors.orange;
     if (totalEvents > 5) statusColor = Colors.red;
@@ -375,20 +306,9 @@ class LogbookScreen extends StatelessWidget {
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Text(
-                  "$date  •  $time",
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
+                Text("$date  •  $time", style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
                 IconButton(
-                  icon: const Icon(
-                    Icons.delete_outline,
-                    color: Colors.white38,
-                    size: 20,
-                  ),
+                  icon: const Icon(Icons.delete_outline, color: Colors.white38, size: 20),
                   onPressed: () => _deleteTrip(context, trip),
                   padding: EdgeInsets.zero,
                   constraints: const BoxConstraints(),
@@ -400,24 +320,15 @@ class LogbookScreen extends StatelessWidget {
               children: [
                 const Icon(Icons.map, color: Colors.blueAccent, size: 16),
                 const SizedBox(width: 6),
-                Text(
-                  "$distanceKm km",
-                  style: const TextStyle(color: Colors.white70),
-                ),
+                Text("$distanceKm km", style: const TextStyle(color: Colors.white70)),
                 const SizedBox(width: 16),
                 if (totalEvents > 0) ...[
                   Icon(Icons.warning, color: statusColor, size: 16),
                   const SizedBox(width: 6),
-                  Text(
-                    "$totalEvents alerts",
-                    style: TextStyle(color: statusColor),
-                  ),
-                ] else
-                  const Text(
-                    "Clean Drive",
-                    style: TextStyle(color: Colors.green, fontSize: 12),
-                  ),
-
+                  Text("$totalEvents alerts", style: TextStyle(color: statusColor)),
+                ] else 
+                  const Text("Clean Drive", style: TextStyle(color: Colors.green, fontSize: 12)),
+                
                 const Spacer(),
                 const Icon(Icons.chevron_right, color: Colors.white24),
               ],
