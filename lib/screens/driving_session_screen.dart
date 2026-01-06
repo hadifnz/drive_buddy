@@ -4,7 +4,7 @@ import 'dart:async';
 import 'dart:math';
 import 'dart:io' show Platform;
 
-import 'package:cloud_firestore/cloud_firestore.dart'; // NEW
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:geolocator/geolocator.dart';
@@ -51,9 +51,6 @@ class _DrivingSessionScreenState extends State<DrivingSessionScreen> {
 
   @override
   void dispose() {
-    // Safety: Try to end session if user swipes back,
-    // but in cloud apps, it's safer to require explicit "End" button
-    // to avoid partial uploads. We cancel streams here.
     _timer?.cancel();
     _positionStream?.cancel();
     _accelerometerStream?.cancel();
@@ -64,52 +61,73 @@ class _DrivingSessionScreenState extends State<DrivingSessionScreen> {
   Future<void> _startSession() async {
     if (Platform.isAndroid || Platform.isIOS) {
       if (await Permission.location.request().isGranted) {
+        
         // 1. Timer
         _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
           if (mounted) setState(() => _sessionDuration++);
         });
 
-        // 2. GPS Stream
-        _positionStream =
-            Geolocator.getPositionStream(
-              locationSettings: const LocationSettings(
-                accuracy: LocationAccuracy.bestForNavigation,
-                distanceFilter: 10,
-              ),
-            ).listen((Position position) {
-              if (mounted) {
-                setState(() {
-                  _speedKmh = position.speed * 3.6;
-                  if (_lastPosition != null) {
-                    _distanceMeters += Geolocator.distanceBetween(
-                      _lastPosition!.latitude,
-                      _lastPosition!.longitude,
-                      position.latitude,
-                      position.longitude,
-                    );
-                  }
-                  _lastPosition = position;
-                  _recordedPath.add(
-                    "${position.latitude},${position.longitude}",
-                  );
-                });
-              }
-            });
+        // 2. GPS Stream (With Filters)
+        // We lower the distance filter to 5 meters to get a smoother line,
+        // but we will filter bad points manually in the listener.
+        const locationSettings = LocationSettings(
+          accuracy: LocationAccuracy.bestForNavigation, 
+          distanceFilter: 5, // Get updates more often (smoother map)
+        );
+
+        _positionStream = Geolocator.getPositionStream(locationSettings: locationSettings)
+            .listen((Position position) {
+          
+          if (!mounted) return;
+
+          // --- FILTER 1: IGNORE WEAK SIGNALS ---
+          // If accuracy is worse than 20 meters, ignore this point (it's garbage data)
+          if (position.accuracy > 20) return;
+
+          // --- FILTER 2: CALCULATE SPEED & DISTANCE ---
+          double newSpeed = position.speed * 3.6; // Convert m/s to km/h
+
+          // If speed is extremely low (< 3 km/h), treat it as 0 (Stop GPS Drift)
+          if (newSpeed < 3.0) {
+            newSpeed = 0.0;
+          }
+
+          double distIncrement = 0;
+          if (_lastPosition != null) {
+            distIncrement = Geolocator.distanceBetween(
+              _lastPosition!.latitude, _lastPosition!.longitude,
+              position.latitude, position.longitude,
+            );
+            
+            // --- FILTER 3: IGNORE TINY JUMPS ---
+            // Only add distance if we moved more than 5 meters to avoid "vibrating" distance
+            if (distIncrement < 5) distIncrement = 0;
+          }
+
+          setState(() {
+            _speedKmh = newSpeed;
+            if (distIncrement > 0) {
+              _distanceMeters += distIncrement;
+              _recordedPath.add("${position.latitude},${position.longitude}");
+              _lastPosition = position; // Only update last pos if we actually accepted the move
+            } else if (_lastPosition == null) {
+              _lastPosition = position; // Initialize first point
+              _recordedPath.add("${position.latitude},${position.longitude}");
+            }
+          });
+        });
 
         // 3. Accelerometer (G-Force)
         _accelerometerStream = userAccelerometerEvents.listen((event) {
           if (!_isDetectingEvents) return;
-          double magnitude = sqrt(
-            (event.x * event.x) + (event.y * event.y) + (event.z * event.z),
-          );
+          // Only detect harsh events if we are ACTUALLY moving (> 10 km/h)
+          // This prevents dropping the phone on the car floor from counting as a crash.
+          if (_speedKmh < 10) return; 
 
+          double magnitude = sqrt((event.x * event.x) + (event.y * event.y) + (event.z * event.z));
+          
           if (magnitude > 4.0) {
-            setState(() => _rapidAccelCount++);
-            _throttleEvents();
-          }
-          if (event.z < -6.0) {
-            // Specific braking check if phone is upright
-            setState(() => _harshBrakingCount++);
+            setState(() => _rapidAccelCount++); 
             _throttleEvents();
           }
         });
@@ -117,11 +135,15 @@ class _DrivingSessionScreenState extends State<DrivingSessionScreen> {
         // 4. Gyroscope (Turns)
         _gyroscopeStream = gyroscopeEvents.listen((event) {
           if (!_isDetectingEvents) return;
+           // Only detect turns if moving
+          if (_speedKmh < 10) return;
+
           if (event.y.abs() > 2.5) {
             setState(() => _sharpTurnCount++);
             _throttleEvents();
           }
         });
+
       } else {
         if (mounted) Navigator.of(context).pop();
       }
@@ -139,13 +161,11 @@ class _DrivingSessionScreenState extends State<DrivingSessionScreen> {
     if (_isSessionSaved) return;
     _isSessionSaved = true;
 
-    // 1. Stop Recording
     _timer?.cancel();
     _positionStream?.cancel();
     _accelerometerStream?.cancel();
     _gyroscopeStream?.cancel();
 
-    // Show loading indicator
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -153,10 +173,9 @@ class _DrivingSessionScreenState extends State<DrivingSessionScreen> {
     );
 
     try {
-      // 2. Prepare Trip Data
       final newTrip = TripSession(
-        id: '', // Firestore generates this
-        carId: widget.car.id, // LINK TO CAR
+        id: '', 
+        carId: widget.car.id,
         endTimestamp: DateTime.now(),
         durationInSeconds: _sessionDuration,
         distanceInMeters: _distanceMeters,
@@ -166,39 +185,30 @@ class _DrivingSessionScreenState extends State<DrivingSessionScreen> {
         routePath: _recordedPath,
       );
 
-      // 3. Upload Trip to Firestore
       await FirebaseFirestore.instance.collection('trips').add(newTrip.toMap());
 
-      // 4. Calculate Wear & Update Car Mileage
       double actualKm = _distanceMeters / 1000.0;
       double stressFactor = 0.0;
-
-      if (_sessionDuration < 600) stressFactor += 1.0; // Cold start
-      if ((_harshBrakingCount + _rapidAccelCount + _sharpTurnCount) > 5)
-        stressFactor += 0.5;
+      
+      if (_sessionDuration < 600) stressFactor += 1.0; 
+      if ((_harshBrakingCount + _rapidAccelCount + _sharpTurnCount) > 5) stressFactor += 0.5;
 
       double effectiveKm = actualKm * (1 + stressFactor);
 
-      // 5. Update the Car Document in Firestore
-      // We use FieldValue.increment to allow safe concurrent updates
-      await FirebaseFirestore.instance
-          .collection('cars')
-          .doc(widget.car.id)
-          .update({
-            'currentMileage': FieldValue.increment(actualKm),
-            'oilLifeRemaining': FieldValue.increment(-effectiveKm),
-          });
+      await FirebaseFirestore.instance.collection('cars').doc(widget.car.id).update({
+        'currentMileage': FieldValue.increment(actualKm),
+        'oilLifeRemaining': FieldValue.increment(-effectiveKm),
+      });
 
       if (mounted) {
-        Navigator.of(context).pop(); // Close loading dialog
-        Navigator.of(context).pop(); // Close driving screen
+        Navigator.of(context).pop(); 
+        Navigator.of(context).pop(); 
       }
+
     } catch (e) {
       if (mounted) {
-        Navigator.of(context).pop(); // Close loading dialog
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text("Upload failed: $e")));
+        Navigator.of(context).pop(); 
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Upload failed: $e")));
       }
     }
   }
@@ -220,69 +230,36 @@ class _DrivingSessionScreenState extends State<DrivingSessionScreen> {
           children: [
             Column(
               children: [
-                Text(
-                  _speedKmh.toStringAsFixed(1),
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 96,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                const Text(
-                  'km/h',
-                  style: TextStyle(color: Colors.white, fontSize: 24),
-                ),
+                // Only show whole numbers for cleaner UI
+                Text(_speedKmh.toStringAsFixed(0), style: const TextStyle(color: Colors.white, fontSize: 96, fontWeight: FontWeight.bold)),
+                const Text('km/h', style: TextStyle(color: Colors.white, fontSize: 24)),
               ],
             ),
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceAround,
               children: [
                 _buildStatCard('Duration', _formatDuration(_sessionDuration)),
-                _buildStatCard(
-                  'Distance',
-                  '${(_distanceMeters / 1000).toStringAsFixed(2)} km',
-                ),
+                _buildStatCard('Distance', '${(_distanceMeters / 1000).toStringAsFixed(2)} km'),
               ],
             ),
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceAround,
               children: [
-                _buildEventCard(
-                  'Harsh',
-                  _harshBrakingCount,
-                  Colors.red.shade700,
-                ),
-                _buildEventCard(
-                  'Accel',
-                  _rapidAccelCount,
-                  Colors.orange.shade700,
-                ),
-                _buildEventCard(
-                  'Turns',
-                  _sharpTurnCount,
-                  Colors.yellow.shade700,
-                ),
+                _buildEventCard('Harsh', _harshBrakingCount, Colors.red.shade700),
+                _buildEventCard('Accel', _rapidAccelCount, Colors.orange.shade700),
+                _buildEventCard('Turns', _sharpTurnCount, Colors.yellow.shade700),
               ],
             ),
             SizedBox(
               width: double.infinity,
               child: ElevatedButton(
-                onPressed: _endSession, // Trigger Cloud Save
+                onPressed: _endSession,
                 style: ElevatedButton.styleFrom(
                   backgroundColor: Colors.red.shade800,
                   padding: const EdgeInsets.symmetric(vertical: 20),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                 ),
-                child: const Text(
-                  'End Driving (Save to Cloud)',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
+                child: const Text('End Driving', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
               ),
             ),
           ],
@@ -291,7 +268,6 @@ class _DrivingSessionScreenState extends State<DrivingSessionScreen> {
     );
   }
 
-  // --- UI Helpers ---
   String _formatDuration(int totalSeconds) {
     final duration = Duration(seconds: totalSeconds);
     String twoDigits(int n) => n.toString().padLeft(2, '0');
@@ -301,18 +277,8 @@ class _DrivingSessionScreenState extends State<DrivingSessionScreen> {
   Widget _buildStatCard(String label, String value) {
     return Column(
       children: [
-        Text(
-          value,
-          style: const TextStyle(
-            color: Colors.white,
-            fontSize: 32,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-        Text(
-          label,
-          style: TextStyle(color: Colors.white.withOpacity(0.7), fontSize: 16),
-        ),
+        Text(value, style: const TextStyle(color: Colors.white, fontSize: 32, fontWeight: FontWeight.bold)),
+        Text(label, style: TextStyle(color: Colors.white.withOpacity(0.7), fontSize: 16)),
       ],
     );
   }
@@ -320,18 +286,8 @@ class _DrivingSessionScreenState extends State<DrivingSessionScreen> {
   Widget _buildEventCard(String label, int count, Color color) {
     return Column(
       children: [
-        Text(
-          count.toString(),
-          style: TextStyle(
-            color: color,
-            fontSize: 40,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-        Text(
-          label,
-          style: TextStyle(color: color.withOpacity(0.8), fontSize: 14),
-        ),
+        Text(count.toString(), style: TextStyle(color: color, fontSize: 40, fontWeight: FontWeight.bold)),
+        Text(label, style: TextStyle(color: color.withOpacity(0.8), fontSize: 14)),
       ],
     );
   }
