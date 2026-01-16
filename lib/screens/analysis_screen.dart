@@ -1,5 +1,3 @@
-// lib/screens/analysis_screen.dart
-
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
@@ -110,53 +108,36 @@ class _AnalysisScreenState extends State<AnalysisScreen> {
   AnalysisData _processData(List<TripSession> trips) {
     final now = DateTime.now();
     List<TripSession> filteredTrips = [];
-    Map<int, int> chartMap = {}; // Index (Day 0-6 or Week 0-3) -> Warning Count
+    Map<int, int> chartMap = {}; 
 
-    // 1. Filter by Time View (Weekly vs Monthly)
     if (_selectedView == 'Weekly') {
-      // Last 7 Days
-      final startOfWeek = now.subtract(const Duration(days: 6)); // 6 days ago + today
+      final startOfWeek = now.subtract(const Duration(days: 6));
       filteredTrips = trips.where((t) => t.endTimestamp.isAfter(startOfWeek)).toList();
-      
-      // Initialize Map (0 to 6)
       for (int i = 0; i < 7; i++) chartMap[i] = 0;
 
-      // Group Data
       for (var t in filteredTrips) {
         if (!_passTimeFilter(t)) continue;
-        // Calculate difference in days (0 = today, 6 = 6 days ago)
         final diff = now.difference(t.endTimestamp).inDays;
         if (diff >= 0 && diff < 7) {
-          // We want the chart to go Left(Oldest) -> Right(Newest)
-          // So index 0 should be 6 days ago. Index 6 is today.
           int chartIndex = 6 - diff; 
           chartMap[chartIndex] = (chartMap[chartIndex] ?? 0) + t.harshBrakingCount + t.rapidAccelCount + t.sharpTurnCount;
         }
       }
-
     } else {
-      // Monthly (Last 28 Days -> 4 Weeks)
       final startOfMonth = now.subtract(const Duration(days: 28));
       filteredTrips = trips.where((t) => t.endTimestamp.isAfter(startOfMonth)).toList();
-
       for (int i = 0; i < 4; i++) chartMap[i] = 0;
 
       for (var t in filteredTrips) {
         if (!_passTimeFilter(t)) continue;
         final diff = now.difference(t.endTimestamp).inDays;
         if (diff >= 0 && diff < 28) {
-          // Week 0 (Oldest), Week 3 (Newest)
-          // diff 0-6 = Week 3 (This week)
-          // diff 7-13 = Week 2
-          // diff 14-20 = Week 1
-          // diff 21-27 = Week 0
           int weekIndex = 3 - (diff ~/ 7);
           chartMap[weekIndex] = (chartMap[weekIndex] ?? 0) + t.harshBrakingCount + t.rapidAccelCount + t.sharpTurnCount;
         }
       }
     }
 
-    // 2. Calculate Totals for Bottom Cards
     double dist = 0;
     int brakes = 0;
     int accel = 0;
@@ -176,7 +157,6 @@ class _AnalysisScreenState extends State<AnalysisScreen> {
   bool _passTimeFilter(TripSession t) {
     if (_timeFilter == 'All') return true;
     final hour = t.endTimestamp.hour;
-    // Day = 6am to 7pm (19:00). Night = 7pm to 6am.
     bool isDay = hour >= 6 && hour < 19;
     if (_timeFilter == 'Day (Sunny)' && isDay) return true;
     if (_timeFilter == 'Night' && !isDay) return true;
@@ -189,7 +169,6 @@ class _AnalysisScreenState extends State<AnalysisScreen> {
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
-        // Weekly/Monthly Toggle
         Container(
           decoration: BoxDecoration(color: Colors.grey.shade900, borderRadius: BorderRadius.circular(10)),
           child: Row(
@@ -199,7 +178,6 @@ class _AnalysisScreenState extends State<AnalysisScreen> {
             ],
           ),
         ),
-        // Day/Night Dropdown
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 12),
           decoration: BoxDecoration(color: Colors.grey.shade900, borderRadius: BorderRadius.circular(10)),
@@ -234,19 +212,16 @@ class _AnalysisScreenState extends State<AnalysisScreen> {
     return FlTitlesData(
       leftTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
       topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-      rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)), // Remove right numbers
+      rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)), 
       bottomTitles: AxisTitles(
         sideTitles: SideTitles(
           showTitles: true,
           getTitlesWidget: (value, meta) {
-            // Label Logic
             String text = '';
             if (_selectedView == 'Weekly') {
-              // value 0 is 6 days ago, value 6 is Today
               DateTime date = DateTime.now().subtract(Duration(days: 6 - value.toInt()));
-              text = DateFormat('E').format(date); // Mon, Tue...
+              text = DateFormat('E').format(date); 
             } else {
-               // Monthly: Week 1, 2, 3, 4
                text = "W${value.toInt() + 1}";
             }
             return Padding(
@@ -265,7 +240,6 @@ class _AnalysisScreenState extends State<AnalysisScreen> {
 
     for (int i = 0; i < maxIndex; i++) {
       int count = data.chartMap[i] ?? 0;
-      // Determine color based on severity
       Color barColor = Colors.green;
       if (count > 2) barColor = Colors.orange;
       if (count > 5) barColor = Colors.red;
@@ -279,7 +253,7 @@ class _AnalysisScreenState extends State<AnalysisScreen> {
               color: barColor,
               width: _selectedView == 'Weekly' ? 16 : 24,
               borderRadius: BorderRadius.circular(4),
-              backDrawRodData: BackgroundBarChartRodData(show: true, toY: 10, color: Colors.white10), // Max height bg
+              backDrawRodData: BackgroundBarChartRodData(show: true, toY: 10, color: Colors.white10), 
             ),
           ],
         ),
@@ -288,9 +262,11 @@ class _AnalysisScreenState extends State<AnalysisScreen> {
     return bars;
   }
 
+  // --- FIXED SUMMARY CARD TO PREVENT OVERFLOW ---
   Widget _buildSummaryCard({required String title, required String value, required IconData icon, required Color color}) {
     return Container(
-      padding: const EdgeInsets.all(16),
+      // Reduced padding from 16 to 12 to fit small screens
+      padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(color: Colors.grey.shade900, borderRadius: BorderRadius.circular(12)),
       child: Row(
         children: [
@@ -299,13 +275,25 @@ class _AnalysisScreenState extends State<AnalysisScreen> {
             decoration: BoxDecoration(color: color.withOpacity(0.2), shape: BoxShape.circle),
             child: Icon(icon, color: color, size: 24),
           ),
-          const SizedBox(width: 16),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(value, style: const TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold)),
-              Text(title, style: const TextStyle(color: Colors.white54, fontSize: 12)),
-            ],
+          // Reduced width from 16 to 12
+          const SizedBox(width: 12),
+          // Wrapped in Expanded so text doesn't push out of bounds
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  value, 
+                  style: const TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold),
+                  overflow: TextOverflow.ellipsis, // Add ellipsis if number is too huge
+                ),
+                Text(
+                  title, 
+                  style: const TextStyle(color: Colors.white54, fontSize: 12),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
+            ),
           ),
         ],
       ),
@@ -313,7 +301,6 @@ class _AnalysisScreenState extends State<AnalysisScreen> {
   }
 }
 
-// Helper Class to hold processed data
 class AnalysisData {
   final Map<int, int> chartMap;
   final double totalDistance;
